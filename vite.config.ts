@@ -22,7 +22,7 @@ export default defineConfig(({ mode }) => ({
         name: "MILLIEFX TRADING APP",
         short_name: "MILLIEFX",
         theme_color: "#770bbf",
-        background_color: "#dca80d",
+        background_color: "#F0F8FF",
         display: "standalone",
         start_url: "/",
         icons: [
