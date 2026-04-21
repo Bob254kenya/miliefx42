@@ -61,8 +61,13 @@ class DerivAPI {
   private globalHandlers: MessageHandler[] = [];
   private connected = false;
   private connectPromise: Promise<void> | null = null;
+  private activeCurrency: string = 'USD'; // Track active account currency
 
   get isConnected() { return this.connected; }
+
+  setActiveCurrency(currency: string) {
+    this.activeCurrency = currency;
+  }
 
   connect(): Promise<void> {
     if (this.connectPromise) return this.connectPromise;
@@ -142,6 +147,10 @@ class DerivAPI {
     await this.connect();
     const response = await this.send({ authorize: token });
     if (response.error) throw new Error(response.error.message);
+    // Update active currency from authorized account
+    if (response.authorize && response.authorize.currency) {
+      this.setActiveCurrency(response.authorize.currency);
+    }
     return response;
   }
 
@@ -191,6 +200,7 @@ class DerivAPI {
     basis: string;
     amount: number;
     barrier?: string;
+    currency?: string;
   }): Promise<{ contractId: string; buyPrice: number }> {
     // Step 1: Get proposal
     const proposalReq: any = {
@@ -201,7 +211,7 @@ class DerivAPI {
       duration_unit: params.duration_unit,
       basis: params.basis,
       amount: params.amount,
-      currency: 'USD',
+      currency: params.currency || this.activeCurrency || 'USD',
     };
     if (params.barrier !== undefined) {
       proposalReq.barrier = params.barrier;
@@ -305,6 +315,7 @@ class DerivAPI {
     basis: string;
     amount: number;
     barrier?: string;
+    currency?: string;
   }): Promise<any> {
     const { contractId, buyPrice } = await this.buyContract(params);
     const result = await this.waitForContractResult(contractId);
