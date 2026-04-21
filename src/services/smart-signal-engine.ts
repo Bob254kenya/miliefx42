@@ -34,13 +34,51 @@ export interface MarketSignal {
   underPct: number;
   evenPct: number;
   oddPct: number;
-  // New: frequency-based entry conditions
+  // Frequency-based entry conditions
   entryDirection: 'OVER' | 'UNDER' | null;
   overStake: number;
   overRecoveryStake: number;
   underStake: number;
   underRecoveryStake: number;
   oddEvenFilter: 'ODD' | 'EVEN' | null;
+  // New: configurable minimum stake
+  minStake: number;
+}
+
+// Configuration for stake amounts - can be adjusted based on account type
+export const TRADING_CONFIG = {
+  // Minimum stake allowed by Deriv (adjust based on your account)
+  MIN_STAKE: 1, // Demo: $1, Real: check your account minimum (often $5 or $10)
+  
+  // Recovery multipliers
+  OVER_RECOVERY_MULTIPLIER: 3,
+  UNDER_RECOVERY_MULTIPLIER: 6,
+  
+  // Signal strength requirements
+  MIN_SIGNAL_STRENGTH: 3,
+  MIN_DIGITS_REQUIRED: 20,
+  
+  // Entry condition thresholds
+  OVER_MOST_THRESHOLD: 4,
+  OVER_LEAST_THRESHOLD: 4,
+  UNDER_MOST_THRESHOLD: 5,
+  UNDER_LEAST_THRESHOLD: 8,
+  
+  // Odd/Even filter threshold
+  ODD_EVEN_THRESHOLD: 55,
+  
+  // Validation thresholds
+  MIN_VALIDATION_PERCENTAGE: 40,
+  MIN_ODD_EVEN_PERCENTAGE: 48,
+};
+
+/**
+ * Get minimum stake based on account type
+ * Call this with the active account's is_virtual flag
+ */
+export function getMinimumStake(isVirtual: boolean, customMin?: number): number {
+  if (customMin) return customMin;
+  return isVirtual ? 1 : 5; // Real accounts typically need $5 minimum
 }
 
 /**
@@ -53,9 +91,13 @@ export function analyzeMarketDigits(
   digits: number[],
   symbol: MarketSymbol,
   marketName: string,
+  isVirtual: boolean = true, // Add account type parameter
+  customMinStake?: number,   // Allow manual override
 ): MarketSignal {
   const len = digits.length || 1;
   const freq = digitFrequency(digits);
+  
+  const minStake = getMinimumStake(isVirtual, customMinStake);
 
   const rankings: DigitRanking[] = [];
   for (let i = 0; i <= 9; i++) {
@@ -83,9 +125,11 @@ export function analyzeMarketDigits(
   let entryDirection: 'OVER' | 'UNDER' | null = null;
 
   // OVER: most freq > 4 AND least freq > 4
-  const overCondition = most.count > 4 && least.count > 4;
+  const overCondition = most.count > TRADING_CONFIG.OVER_MOST_THRESHOLD && 
+                        least.count > TRADING_CONFIG.OVER_LEAST_THRESHOLD;
   // UNDER: most freq < 5 AND least freq < 8
-  const underCondition = most.count < 5 && least.count < 8;
+  const underCondition = most.count < TRADING_CONFIG.UNDER_MOST_THRESHOLD && 
+                         least.count < TRADING_CONFIG.UNDER_LEAST_THRESHOLD;
 
   if (overCondition && !underCondition) {
     entryDirection = 'OVER';
@@ -112,12 +156,15 @@ export function analyzeMarketDigits(
   if (least.pct < 5) strength += 1;
   strength = Math.min(10, strength);
 
-  const isValid = entryDirection !== null && strength >= 3 && digits.length >= 20;
+  const isValid = entryDirection !== null && 
+                  strength >= TRADING_CONFIG.MIN_SIGNAL_STRENGTH && 
+                  digits.length >= TRADING_CONFIG.MIN_DIGITS_REQUIRED;
 
   let validationReason = '';
   if (!isValid) {
     if (!entryDirection) validationReason = 'No entry condition met';
-    else if (strength < 3) validationReason = `Strength ${strength} < 3`;
+    else if (strength < TRADING_CONFIG.MIN_SIGNAL_STRENGTH) 
+      validationReason = `Strength ${strength} < ${TRADING_CONFIG.MIN_SIGNAL_STRENGTH}`;
     else validationReason = 'Insufficient data';
   } else {
     validationReason = `${entryDirection} | STR ${strength} | Most:${most.count} Least:${least.count} | ${oddEvenFilter || 'N/A'} filter`;
@@ -128,14 +175,20 @@ export function analyzeMarketDigits(
 
   // Apply odd/even filter override
   if (isValid && oddEvenFilter) {
-    if (oddEvenFilter === 'ODD' && oddPct > 55) {
+    if (oddEvenFilter === 'ODD' && oddPct > TRADING_CONFIG.ODD_EVEN_THRESHOLD) {
       suggestedContract = 'DIGITODD';
       suggestedBarrier = '';
-    } else if (oddEvenFilter === 'EVEN' && evenPct > 55) {
+    } else if (oddEvenFilter === 'EVEN' && evenPct > TRADING_CONFIG.ODD_EVEN_THRESHOLD) {
       suggestedContract = 'DIGITEVEN';
       suggestedBarrier = '';
     }
   }
+
+  // Calculate stakes based on minimum stake
+  const overStake = minStake;
+  const overRecoveryStake = minStake * TRADING_CONFIG.OVER_RECOVERY_MULTIPLIER;
+  const underStake = minStake;
+  const underRecoveryStake = minStake * TRADING_CONFIG.UNDER_RECOVERY_MULTIPLIER;
 
   return {
     symbol, marketName, digits, rankings,
@@ -144,26 +197,33 @@ export function analyzeMarketDigits(
     suggestedContract, suggestedBarrier,
     overPct, underPct, evenPct, oddPct,
     entryDirection,
-    overStake: 1, overRecoveryStake: 3,
-    underStake: 1, underRecoveryStake: 6,
+    overStake,
+    overRecoveryStake,
+    underStake,
+    underRecoveryStake,
     oddEvenFilter,
+    minStake,
   };
 }
 
 /**
  * Validates digit eligibility before trade execution.
+ * Now accounts for real account requirements.
  */
 export function validateDigitEligibility(
   digits: number[],
   contractType: string,
   barrier: number,
+  isVirtual: boolean = true, // Add account type parameter
 ): { eligible: boolean; reason: string; dominantDigits: number[] } {
-  if (digits.length < 10) {
-    return { eligible: false, reason: 'Need 10+ ticks for analysis', dominantDigits: [] };
+  if (digits.length < TRADING_CONFIG.MIN_DIGITS_REQUIRED) {
+    return { eligible: false, reason: `Need ${TRADING_CONFIG.MIN_DIGITS_REQUIRED}+ ticks for analysis`, dominantDigits: [] };
   }
 
   const len = digits.length;
   const freq = digitFrequency(digits);
+  const minPercentage = TRADING_CONFIG.MIN_VALIDATION_PERCENTAGE;
+  const minOddEvenPercentage = TRADING_CONFIG.MIN_ODD_EVEN_PERCENTAGE;
 
   if (contractType === 'DIGITOVER') {
     const aboveDigits = digits.filter(d => d > barrier);
@@ -175,8 +235,8 @@ export function validateDigitEligibility(
       .slice(0, 3)
       .map(d => d.digit);
 
-    if (abovePct < 40) {
-      return { eligible: false, reason: `Over ${barrier} only ${abovePct.toFixed(1)}% — need 40%+`, dominantDigits: dominantAbove };
+    if (abovePct < minPercentage) {
+      return { eligible: false, reason: `Over ${barrier} only ${abovePct.toFixed(1)}% — need ${minPercentage}%+`, dominantDigits: dominantAbove };
     }
     return { eligible: true, reason: `Over ${barrier} at ${abovePct.toFixed(1)}% ✓`, dominantDigits: dominantAbove };
   }
@@ -191,8 +251,8 @@ export function validateDigitEligibility(
       .slice(0, 3)
       .map(d => d.digit);
 
-    if (belowPct < 40) {
-      return { eligible: false, reason: `Under ${barrier} only ${belowPct.toFixed(1)}% — need 40%+`, dominantDigits: dominantBelow };
+    if (belowPct < minPercentage) {
+      return { eligible: false, reason: `Under ${barrier} only ${belowPct.toFixed(1)}% — need ${minPercentage}%+`, dominantDigits: dominantBelow };
     }
     return { eligible: true, reason: `Under ${barrier} at ${belowPct.toFixed(1)}% ✓`, dominantDigits: dominantBelow };
   }
@@ -200,8 +260,8 @@ export function validateDigitEligibility(
   if (contractType === 'DIGITEVEN') {
     const evenCount = digits.filter(d => d % 2 === 0).length;
     const evenPct = (evenCount / len) * 100;
-    if (evenPct < 48) {
-      return { eligible: false, reason: `Even at ${evenPct.toFixed(1)}% — weak`, dominantDigits: [0, 2, 4, 6, 8] };
+    if (evenPct < minOddEvenPercentage) {
+      return { eligible: false, reason: `Even at ${evenPct.toFixed(1)}% — need ${minOddEvenPercentage}%+`, dominantDigits: [0, 2, 4, 6, 8] };
     }
     return { eligible: true, reason: `Even at ${evenPct.toFixed(1)}% ✓`, dominantDigits: [0, 2, 4, 6, 8] };
   }
@@ -209,8 +269,8 @@ export function validateDigitEligibility(
   if (contractType === 'DIGITODD') {
     const oddCount = digits.filter(d => d % 2 !== 0).length;
     const oddPct = (oddCount / len) * 100;
-    if (oddPct < 48) {
-      return { eligible: false, reason: `Odd at ${oddPct.toFixed(1)}% — weak`, dominantDigits: [1, 3, 5, 7, 9] };
+    if (oddPct < minOddEvenPercentage) {
+      return { eligible: false, reason: `Odd at ${oddPct.toFixed(1)}% — need ${minOddEvenPercentage}%+`, dominantDigits: [1, 3, 5, 7, 9] };
     }
     return { eligible: true, reason: `Odd at ${oddPct.toFixed(1)}% ✓`, dominantDigits: [1, 3, 5, 7, 9] };
   }
@@ -232,7 +292,11 @@ export interface RecoveryState {
   exhausted: boolean;
 }
 
-export function createRecoveryState(baseStake: number, recoveryStake: number, maxRecovery: number = 5): RecoveryState {
+export function createRecoveryState(
+  baseStake: number, 
+  recoveryStake: number, 
+  maxRecovery: number = 5
+): RecoveryState {
   return {
     inRecovery: false,
     lastWasLoss: false,
@@ -304,11 +368,13 @@ export function checkConditionsStillValid(
 
   // Check if original entry conditions still hold
   if (signal.entryDirection === 'OVER') {
-    if (most.count <= 4 || least.count <= 4) {
+    if (most.count <= TRADING_CONFIG.OVER_MOST_THRESHOLD || 
+        least.count <= TRADING_CONFIG.OVER_LEAST_THRESHOLD) {
       return { valid: false, reason: `OVER conditions lost: most=${most.count}, least=${least.count}` };
     }
   } else if (signal.entryDirection === 'UNDER') {
-    if (most.count >= 5 || least.count >= 8) {
+    if (most.count >= TRADING_CONFIG.UNDER_MOST_THRESHOLD || 
+        least.count >= TRADING_CONFIG.UNDER_LEAST_THRESHOLD) {
       return { valid: false, reason: `UNDER conditions lost: most=${most.count}, least=${least.count}` };
     }
   }
@@ -324,4 +390,17 @@ export function checkConditionsStillValid(
   }
 
   return { valid: true, reason: 'Conditions still valid' };
+}
+
+/**
+ * Calculate appropriate stake based on account balance and risk percentage
+ */
+export function calculateStakeFromBalance(
+  balance: number,
+  riskPercentage: number = 2, // Default 2% risk
+  minStake: number = 1,
+  maxStake: number = 100
+): number {
+  const calculatedStake = (balance * riskPercentage) / 100;
+  return Math.min(maxStake, Math.max(minStake, calculatedStake));
 }
