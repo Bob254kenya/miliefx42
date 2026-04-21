@@ -1,0 +1,706 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Modern Fonts for Cyberpunk/Terminal Theme */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700;800&display=swap');
+
+@layer base {
+  :root {
+    /* Core Colors - Cyberpunk Dark Theme */
+    --background: 222 47% 8%;      /* Deeper dark background */
+    --foreground: 210 20% 92%;     /* Crisp off-white text */
+    
+    --card: 225 30% 12%;           /* Dark elevated surface */
+    --card-foreground: 210 20% 92%;
+    
+    --popover: 225 30% 12%;
+    --popover-foreground: 210 20% 92%;
+    
+    /* Primary - Electric Cyan */
+    --primary: 175 100% 45%;
+    --primary-foreground: 222 47% 8%;
+    
+    /* Secondary - Vibrant Purple */
+    --secondary: 280 80% 60%;
+    --secondary-foreground: 210 20% 92%;
+    
+    /* Muted - Slate Gray */
+    --muted: 217 25% 25%;
+    --muted-foreground: 215 20% 70%;
+    
+    /* Accent - Neon Pink */
+    --accent: 330 85% 60%;
+    --accent-foreground: 210 20% 92%;
+    
+    /* Destructive - Red Alert */
+    --destructive: 0 85% 65%;
+    --destructive-foreground: 210 20% 92%;
+    
+    /* Border & Input - Cyberpunk Glow */
+    --border: 217 25% 30%;
+    --input: 217 25% 20%;
+    --ring: 175 100% 45%;
+    
+    --radius: 0.25rem;             /* Sharper corners for terminal feel */
+    
+    /* Trading Specific Colors */
+    --profit: 130 80% 55%;         /* Bright neon green */
+    --profit-foreground: 130 80% 10%;
+    --loss: 0 85% 60%;             /* Vibrant red */
+    --loss-foreground: 0 85% 10%;
+    --warning: 45 100% 55%;        /* Electric yellow */
+    --warning-foreground: 45 100% 10%;
+    
+    /* Chart Colors - Cyberpunk Palette */
+    --chart-1: 175 100% 45%;       /* Cyan */
+    --chart-2: 280 80% 60%;        /* Purple */
+    --chart-3: 330 85% 60%;        /* Pink */
+    --chart-4: 45 100% 55%;        /* Yellow */
+    --chart-5: 195 100% 50%;       /* Bright Blue */
+    
+    /* Parity Colors */
+    --even: 175 100% 45%;
+    --even-foreground: 222 47% 8%;
+    --odd: 280 80% 60%;
+    --odd-foreground: 210 20% 92%;
+    --signal: 330 85% 60%;
+    --signal-foreground: 210 20% 92%;
+    
+    /* Sidebar - Darker Terminal */
+    --sidebar-background: 222 47% 5%;
+    --sidebar-foreground: 210 20% 92%;
+    --sidebar-primary: 175 100% 45%;
+    --sidebar-primary-foreground: 222 47% 8%;
+    --sidebar-accent: 280 80% 60%;
+    --sidebar-accent-foreground: 210 20% 92%;
+    --sidebar-border: 217 25% 20%;
+    --sidebar-ring: 175 100% 45%;
+    --sidebar: 225 30% 10%;
+    
+    /* Typography - Modern & Clean with INCREASED SIZES */
+    --font-sans: 'DM Sans', 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    --font-mono: 'JetBrains Mono', 'Space Mono', 'SF Mono', ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
+    --font-display: 'Space Grotesk', 'Inter', ui-sans-serif, system-ui;
+    
+    /* Shadows - Glow Effects */
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.4);
+    --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.4), 0 1px 2px -1px rgb(0 0 0 / 0.4);
+    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4), 0 2px 4px -2px rgb(0 0 0 / 0.4);
+    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.4), 0 4px 6px -4px rgb(0 0 0 / 0.4);
+    --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.4), 0 8px 10px -6px rgb(0 0 0 / 0.4);
+    --shadow-2xl: 0 25px 50px -12px rgb(0 0 0 / 0.5);
+    
+    /* Spacing */
+    --spacing: 0.25rem;
+  }
+  
+  /* Light Theme Option - Clean Modern White */
+  .light {
+    --background: 210 20% 98%;
+    --foreground: 222 47% 11%;
+    
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    
+    --primary: 175 80% 35%;
+    --primary-foreground: 210 20% 98%;
+    
+    --secondary: 280 70% 50%;
+    --secondary-foreground: 210 20% 98%;
+    
+    --muted: 210 15% 90%;
+    --muted-foreground: 222 47% 30%;
+    
+    --accent: 330 75% 50%;
+    --accent-foreground: 210 20% 98%;
+    
+    --destructive: 0 75% 55%;
+    --destructive-foreground: 210 20% 98%;
+    
+    --border: 214 20% 85%;
+    --input: 214 20% 85%;
+    --ring: 175 80% 35%;
+    
+    --profit: 130 75% 45%;
+    --profit-foreground: 210 20% 98%;
+    --loss: 0 75% 55%;
+    --loss-foreground: 210 20% 98%;
+    --warning: 40 95% 50%;
+    --warning-foreground: 210 20% 98%;
+    
+    --sidebar-background: 210 20% 95%;
+    --sidebar-foreground: 222 47% 11%;
+    --sidebar-primary: 175 80% 35%;
+    --sidebar-primary-foreground: 210 20% 98%;
+    --sidebar-accent: 280 70% 50%;
+    --sidebar-accent-foreground: 210 20% 98%;
+    --sidebar-border: 214 20% 85%;
+    --sidebar-ring: 175 80% 35%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-family: var(--font-sans);
+    /* INCREASED base font size from 15px to 18px */
+    font-size: 18px;
+    /* INCREASED line height for better readability */
+    line-height: 1.65;
+    /* BOLDER default weight */
+    font-weight: 500;
+    letter-spacing: -0.01em;
+  }
+  
+  /* INCREASED Typography Scale - BOLDER & LARGER */
+  h1, .h1 {
+    font-family: var(--font-display);
+    /* INCREASED from 56px to 68px */
+    font-size: 68px;
+    /* BOLDER from 800 to 900 */
+    font-weight: 900;
+    line-height: 1.08;
+    letter-spacing: -0.03em;
+    @apply tracking-tight;
+  }
+  
+  h2, .h2 {
+    font-family: var(--font-display);
+    /* INCREASED from 40px to 52px */
+    font-size: 52px;
+    /* BOLDER from 700 to 800 */
+    font-weight: 800;
+    line-height: 1.15;
+    letter-spacing: -0.025em;
+  }
+  
+  h3, .h3 {
+    font-family: var(--font-display);
+    /* INCREASED from 28px to 36px */
+    font-size: 36px;
+    /* BOLDER from 700 to 800 */
+    font-weight: 800;
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+  }
+  
+  h4, .h4 {
+    font-family: var(--font-display);
+    /* INCREASED from 22px to 28px */
+    font-size: 28px;
+    /* BOLDER from 600 to 700 */
+    font-weight: 700;
+    line-height: 1.3;
+    letter-spacing: -0.015em;
+  }
+  
+  h5, .h5 {
+    font-family: var(--font-display);
+    /* NEW heading level */
+    font-size: 24px;
+    font-weight: 700;
+    line-height: 1.35;
+    letter-spacing: -0.01em;
+  }
+  
+  h6, .h6 {
+    font-family: var(--font-display);
+    /* NEW heading level */
+    font-size: 20px;
+    font-weight: 700;
+    line-height: 1.4;
+    letter-spacing: -0.005em;
+  }
+  
+  /* INCREASED paragraph text */
+  p, .paragraph {
+    font-size: 18px;
+    font-weight: 500;
+    line-height: 1.65;
+  }
+  
+  /* Small text - slightly increased */
+  small, .small {
+    font-size: 15px;
+    font-weight: 500;
+  }
+  
+  /* Extra small text */
+  .xs-text {
+    font-size: 13px;
+    font-weight: 500;
+  }
+  
+  /* Mono for Data & Code - INCREASED & BOLDER */
+  code, pre, .tabular-nums, .data-text {
+    font-family: var(--font-mono);
+    /* INCREASED from default to 16px */
+    font-size: 16px;
+    /* BOLDER */
+    font-weight: 600;
+    font-feature-settings: "tnum" on, "lnum" on;
+  }
+  
+  /* Code blocks - even larger */
+  pre code {
+    font-size: 15px;
+    font-weight: 500;
+  }
+  
+  /* INCREASED strong/bold weight */
+  strong, b {
+    font-weight: 800;
+  }
+  
+  /* Button & Interactive Elements - BOLDER */
+  button, .button {
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    font-size: 16px;
+  }
+  
+  /* Large buttons */
+  .button-lg {
+    font-size: 18px;
+    font-weight: 700;
+  }
+  
+  /* Small buttons */
+  .button-sm {
+    font-size: 14px;
+    font-weight: 600;
+  }
+  
+  /* Links - BOLDER */
+  a {
+    font-weight: 600;
+    @apply transition-all duration-200;
+  }
+  
+  /* Labels - BOLDER */
+  label, .label {
+    font-weight: 700;
+    font-size: 15px;
+    letter-spacing: -0.01em;
+  }
+  
+  /* Input text - INCREASED */
+  input, textarea, select {
+    font-size: 16px;
+    font-weight: 500;
+  }
+  
+  /* List items */
+  li {
+    font-size: 18px;
+    font-weight: 500;
+    line-height: 1.65;
+  }
+  
+  /* Blockquotes */
+  blockquote {
+    font-size: 20px;
+    font-weight: 600;
+    line-height: 1.5;
+  }
+}
+
+@layer utilities {
+  /* Trading Colors */
+  .text-profit {
+    color: hsl(var(--profit));
+    font-weight: 700;
+  }
+  .text-loss {
+    color: hsl(var(--loss));
+    font-weight: 700;
+  }
+  .text-warning {
+    color: hsl(var(--warning));
+    font-weight: 700;
+  }
+  
+  .bg-profit {
+    background-color: hsl(var(--profit));
+  }
+  .bg-loss {
+    background-color: hsl(var(--loss));
+  }
+  .bg-warning {
+    background-color: hsl(var(--warning));
+  }
+  
+  .bg-profit\/10 {
+    background-color: hsl(var(--profit) / 0.1);
+  }
+  .bg-loss\/10 {
+    background-color: hsl(var(--loss) / 0.1);
+  }
+  .bg-warning\/10 {
+    background-color: hsl(var(--warning) / 0.1);
+  }
+  
+  /* Glow Effects - Cyberpunk Style */
+  .glow-primary {
+    box-shadow: 0 0 20px hsl(var(--primary) / 0.5), 0 0 40px hsl(var(--primary) / 0.3);
+  }
+  .glow-profit {
+    box-shadow: 0 0 15px hsl(var(--profit) / 0.5), 0 0 30px hsl(var(--profit) / 0.2);
+  }
+  .glow-loss {
+    box-shadow: 0 0 15px hsl(var(--loss) / 0.5), 0 0 30px hsl(var(--loss) / 0.2);
+  }
+  .glow-accent {
+    box-shadow: 0 0 20px hsl(var(--accent) / 0.4);
+  }
+  
+  /* Text Glow - BOLDER text with glow */
+  .text-glow-primary {
+    text-shadow: 0 0 10px hsl(var(--primary) / 0.5);
+    font-weight: 800;
+  }
+  .text-glow-profit {
+    text-shadow: 0 0 8px hsl(var(--profit) / 0.4);
+    font-weight: 800;
+  }
+  
+  /* Gradients */
+  .gradient-primary {
+    background: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--secondary)));
+  }
+  .gradient-accent {
+    background: linear-gradient(135deg, hsl(var(--accent)), hsl(var(--secondary)));
+  }
+  .gradient-dark {
+    background: linear-gradient(135deg, hsl(222 47% 8%), hsl(225 30% 12%));
+  }
+  
+  /* Terminal Grid Pattern */
+  .trading-grid {
+    background-image: 
+      linear-gradient(hsl(var(--border) / 0.2) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--border) / 0.2) 1px, transparent 1px);
+    background-size: 30px 30px;
+  }
+  
+  /* Subtle Dot Pattern */
+  .dot-pattern {
+    background-image: radial-gradient(hsl(var(--border) / 0.15) 1px, transparent 1px);
+    background-size: 20px 20px;
+  }
+  
+  /* Scanner Line Animation */
+  @keyframes scanner {
+    0% { transform: translateY(-100%); }
+    100% { transform: translateY(100vh); }
+  }
+  
+  .scanner-line {
+    position: relative;
+    overflow: hidden;
+  }
+  
+  .scanner-line::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, hsl(var(--primary)), transparent);
+    animation: scanner 8s linear infinite;
+    opacity: 0.3;
+    pointer-events: none;
+  }
+  
+  /* Hide Scrollbar but keep functionality */
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  
+  /* Custom Scrollbar - Terminal Style */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: hsl(var(--muted) / 0.3);
+    border-radius: 4px;
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: hsl(var(--primary) / 0.5);
+    border-radius: 4px;
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--primary) / 0.8);
+  }
+  
+  /* Blinking Cursor Effect */
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+  
+  .blinking-cursor {
+    animation: blink 1s step-end infinite;
+  }
+  
+  /* Card Hover Effects */
+  .card-hover {
+    @apply transition-all duration-300;
+  }
+  
+  .card-hover:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px -5px rgb(0 0 0 / 0.3);
+  }
+  
+  /* Data Tables - INCREASED & BOLDER */
+  .data-table th {
+    @apply font-mono;
+    font-size: 14px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  
+  .data-table td {
+    @apply font-mono;
+    font-size: 16px;
+    font-weight: 600;
+    font-feature-settings: "tnum" on, "lnum" on;
+  }
+  
+  /* Badges - BOLDER */
+  .badge-profit {
+    @apply bg-profit/10 text-profit font-mono;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+  }
+  
+  .badge-loss {
+    @apply bg-loss/10 text-loss font-mono;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+  }
+  
+  .badge-warning {
+    @apply bg-warning/10 text-warning font-mono;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+  }
+  
+  /* Glass Morphism Effects */
+  .glass {
+    background: hsl(var(--card) / 0.7);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+  
+  /* Number Animations */
+  @keyframes countUp {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  
+  .animate-count-up {
+    animation: countUp 0.5s ease-out forwards;
+  }
+  
+  /* Pulse Ring */
+  @keyframes pulse-ring {
+    0% {
+      transform: scale(0.8);
+      opacity: 0.8;
+    }
+    100% {
+      transform: scale(2);
+      opacity: 0;
+    }
+  }
+  
+  .pulse-ring {
+    position: relative;
+  }
+  
+  .pulse-ring::before {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border-radius: inherit;
+    background: hsl(var(--profit));
+    animation: pulse-ring 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    opacity: 0;
+  }
+  
+  /* Status Indicators - BOLDER text */
+  .status-online {
+    @apply relative inline-flex items-center;
+    font-weight: 700;
+  }
+  
+  .status-online::before {
+    content: '';
+    @apply absolute w-2 h-2 bg-profit rounded-full;
+    animation: pulse-ring 1.5s infinite;
+  }
+  
+  /* Utility classes for font weight */
+  .font-semibold {
+    font-weight: 600;
+  }
+  
+  .font-bold {
+    font-weight: 700;
+  }
+  
+  .font-extrabold {
+    font-weight: 800;
+  }
+  
+  .font-black {
+    font-weight: 900;
+  }
+  
+  /* Increased text size utilities */
+  .text-xs {
+    font-size: 13px !important;
+  }
+  
+  .text-sm {
+    font-size: 15px !important;
+  }
+  
+  .text-base {
+    font-size: 18px !important;
+  }
+  
+  .text-lg {
+    font-size: 20px !important;
+  }
+  
+  .text-xl {
+    font-size: 24px !important;
+  }
+  
+  .text-2xl {
+    font-size: 30px !important;
+  }
+  
+  .text-3xl {
+    font-size: 36px !important;
+  }
+  
+  .text-4xl {
+    font-size: 48px !important;
+  }
+  
+  .text-5xl {
+    font-size: 60px !important;
+  }
+  
+  /* Bolder link hover states */
+  .link-bold {
+    font-weight: 700;
+    text-decoration: none;
+    transition: all 0.2s ease;
+  }
+  
+  .link-bold:hover {
+    font-weight: 800;
+    text-shadow: 0 0 4px currentColor;
+  }
+  
+  /* Number ticker styling - LARGE & BOLD */
+  .ticker-number {
+    font-family: var(--font-mono);
+    font-size: 32px;
+    font-weight: 800;
+    font-feature-settings: "tnum" on, "lnum" on;
+    letter-spacing: -0.02em;
+  }
+  
+  .ticker-number-large {
+    font-family: var(--font-mono);
+    font-size: 48px;
+    font-weight: 900;
+    font-feature-settings: "tnum" on, "lnum" on;
+    letter-spacing: -0.03em;
+  }
+  
+  /* Dashboard card titles */
+  .card-title {
+    font-family: var(--font-display);
+    font-size: 20px;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+  }
+  
+  /* Metric values */
+  .metric-value {
+    font-family: var(--font-mono);
+    font-size: 28px;
+    font-weight: 800;
+    font-feature-settings: "tnum" on, "lnum" on;
+  }
+  
+  .metric-label {
+    font-size: 14px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+}
+
+/* Print Styles */
+@media print {
+  .no-print {
+    display: none;
+  }
+  
+  body {
+    @apply bg-white text-black;
+    font-size: 12pt;
+  }
+  
+  h1 {
+    font-size: 24pt !important;
+  }
+  
+  h2 {
+    font-size: 20pt !important;
+  }
+  
+  h3 {
+    font-size: 16pt !important;
+  }
+}
