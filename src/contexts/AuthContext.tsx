@@ -32,6 +32,27 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState | null>(null);
 
+// Helper function to filter out CRW and VRW accounts
+const filterAllowedAccounts = (accounts: DerivAccount[]): DerivAccount[] => {
+  console.log('Filtering accounts:', accounts.map(a => a.loginid));
+  
+  const filtered = accounts.filter(account => {
+    const loginid = account.loginid.toUpperCase();
+    const isExcluded = loginid.startsWith('CRW') || loginid.startsWith('VRW');
+    
+    if (isExcluded) {
+      console.log(`Excluding account: ${account.loginid}`);
+    } else {
+      console.log(`Keeping account: ${account.loginid}`);
+    }
+    
+    return !isExcluded;
+  });
+  
+  console.log('Filtered accounts:', filtered.map(a => a.loginid));
+  return filtered;
+};
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isAuthorized, setIsAuthorized] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -58,16 +79,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const selectAccount = useCallback(
     (available: DerivAccount[]) => {
+      console.log('Selecting account from:', available.map(a => a.loginid));
+      
       const saved = localStorage.getItem("last_active_loginid");
 
       if (saved) {
         const match = available.find((a) => a.loginid === saved);
-        if (match) return match;
+        if (match) {
+          console.log('Using saved account:', match.loginid);
+          return match;
+        }
       }
 
       const real = available.find((a) => !a.is_virtual);
-      if (real) return real;
+      if (real) {
+        console.log('Using real account:', real.loginid);
+        return real;
+      }
 
+      console.log('Using first account:', available[0]?.loginid);
       return available[0];
     },
     []
@@ -122,17 +152,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         // OAuth redirect login
         if (search.includes("acct1")) {
+          console.log('OAuth redirect detected');
           const parsed = parseOAuthRedirect(search);
+          console.log('Parsed accounts from OAuth:', parsed.map(a => a.loginid));
 
           if (parsed.length > 0 && !cancelled) {
+            // Filter out CRW and VRW accounts
+            const allowedAccounts = filterAllowedAccounts(parsed);
+            
+            if (allowedAccounts.length === 0) {
+              console.warn('No allowed accounts found (CRW and VRW filtered out)');
+              setIsLoading(false);
+              return;
+            }
+            
             localStorage.setItem(
               "deriv_accounts",
-              JSON.stringify(parsed)
+              JSON.stringify(allowedAccounts)
             );
 
-            setAccounts(parsed);
+            setAccounts(allowedAccounts);
 
-            const account = selectAccount(parsed);
+            const account = selectAccount(allowedAccounts);
 
             await authorizeAccount(account);
 
@@ -147,13 +188,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         // Stored session login
         const stored = localStorage.getItem("deriv_accounts");
+        console.log('Stored accounts from localStorage:', stored);
 
         if (stored) {
           const parsed: DerivAccount[] = JSON.parse(stored);
+          console.log('Parsed stored accounts:', parsed.map(a => a.loginid));
+          
+          // Filter out CRW and VRW accounts
+          const allowedAccounts = filterAllowedAccounts(parsed);
+          
+          if (allowedAccounts.length === 0) {
+            console.warn('No allowed accounts found in stored data');
+            // Clear invalid stored data
+            localStorage.removeItem("deriv_accounts");
+            setIsLoading(false);
+            return;
+          }
 
-          setAccounts(parsed);
+          setAccounts(allowedAccounts);
 
-          const account = selectAccount(parsed);
+          const account = selectAccount(allowedAccounts);
 
           await authorizeAccount(account);
         }
