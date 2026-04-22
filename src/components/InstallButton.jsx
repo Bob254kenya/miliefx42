@@ -262,7 +262,7 @@ function InstallButton() {
           <div style={styles.modalContainer} onClick={(e) => e.stopPropagation()}>
             <div style={styles.modalHeader}>
               <div style={styles.modalIcon}>🚀</div>
-              <h2 style={styles.modalTitle}>Install RamzFX App</h2>
+              <h2 style={styles.modalTitle}>Install MillieFX App</h2>
               <p style={styles.modalSubtitle}>Trade better with our native app</p>
             </div>
 
