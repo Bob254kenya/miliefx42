@@ -14,7 +14,7 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   Play, StopCircle, Trash2, Scan,
   Home, RefreshCw, Shield, Zap, Eye, Anchor, Download, Upload, X, Users,
-  MessageCircle, MessageSquare, Youtube, Instagram, Music, BarChart3, Activity, TrendingUp, TrendingDown, Target, Volume2, VolumeX, LineChart, Wifi, WifiOff, Trophy, ShieldAlert, GripVertical
+  MessageCircle, MessageSquare, Youtube, Instagram, Music, BarChart3, Activity, TrendingUp, TrendingDown, Target, Volume2, VolumeX, LineChart, Wifi, WifiOff, Trophy, ShieldAlert, GripVertical, Combine
 } from 'lucide-react';
 import ConfigPreview, { type BotConfig } from '@/components/bot-config/ConfigPreview';
 
@@ -1220,7 +1220,7 @@ type BotStatus = 'idle' | 'trading_m1' | 'recovery' | 'waiting_pattern' | 'patte
 interface LogEntry {
   id: number;
   time: string;
-  market: 'M1' | 'M2' | 'VH' | 'SYSTEM';
+  market: 'M1' | 'M2' | 'VH' | 'SYSTEM' | 'COMBINED';
   symbol: string;
   contract: string;
   stake: number;
@@ -1244,6 +1244,7 @@ interface BotState {
   vhConsecLosses: number;
   vhStatus: 'idle' | 'waiting' | 'confirmed' | 'failed';
   patternTradeTaken: boolean;
+  combinedTradeTaken: boolean;
 }
 
 class CircularTickBuffer {
@@ -1370,6 +1371,64 @@ class BalanceCache {
   }
 }
 
+// Helper function to parse combined patterns
+// Pattern formats:
+// - Digit patterns: "1", "5", "11", "112", "321", "992" (any sequence of digits)
+// - EO patterns: "E", "O", "EE", "EO", "EEO", "OOE", etc.
+// - Mixed: "1O" means second last is 1, last is over (digit > 4)
+// - Mixed: "1U" means second last is 1, last is under (digit < 5)
+// - Mixed: "5E" means second last is 5, last is even
+// - Mixed: "3O" means second last is 3, last is odd
+// Patterns are separated by commas
+function checkCombinedPattern(digits: number[], patternStr: string): boolean {
+  if (!patternStr || patternStr.trim() === '') return false;
+  const patterns = patternStr.split(',').map(p => p.trim().toUpperCase()).filter(p => p.length > 0);
+  if (patterns.length === 0) return false;
+  
+  for (const pattern of patterns) {
+    let matched = true;
+    const len = pattern.length;
+    if (digits.length < len) {
+      matched = false;
+      continue;
+    }
+    const recentDigits = digits.slice(-len);
+    
+    for (let i = 0; i < len; i++) {
+      const patternChar = pattern[i];
+      const digit = recentDigits[i];
+      const isOver = digit > 4;
+      const isEven = digit % 2 === 0;
+      
+      if (patternChar === 'U') {
+        // Under: digit < 5
+        if (!(digit < 5)) { matched = false; break; }
+      } else if (patternChar === 'O') {
+        // Over: digit > 4
+        if (!(digit > 4)) { matched = false; break; }
+      } else if (patternChar === 'E') {
+        // Even
+        if (!isEven) { matched = false; break; }
+      } else if (patternChar === 'O') {
+        // Odd (for EO patterns - but O is also used for Over, we need to differentiate)
+        // For EO patterns, we need to check if the character is a digit or EO indicator
+        // If it's not a digit and not U/E, treat as odd
+        if (isEven) { matched = false; break; }
+      } else if (patternChar >= '0' && patternChar <= '9') {
+        // Exact digit match
+        if (digit !== parseInt(patternChar)) { matched = false; break; }
+      } else {
+        // Unknown char
+        matched = false;
+        break;
+      }
+    }
+    
+    if (matched) return true;
+  }
+  return false;
+}
+
 export default function ProScannerBot() {
   const { isAuthorized, balance: authBalance, activeAccount, refreshBalance } = useAuth();
   const { recordLoss } = useLossRequirement();
@@ -1383,6 +1442,7 @@ export default function ProScannerBot() {
   const balanceCache = useRef(BalanceCache.getInstance()).current;
   const [localBalance, setLocalBalance] = useState(authBalance);
   const patternTradeTakenRef = useRef(false);
+  const combinedTradeTakenRef = useRef(false);
   
   const [isReconnecting, setIsReconnecting] = useState(false);
   const savedBotStateRef = useRef<BotState | null>(null);
@@ -1416,6 +1476,12 @@ export default function ProScannerBot() {
   const [m2VirtualLossCount, setM2VirtualLossCount] = useState('3');
   const [m2RealCount, setM2RealCount] = useState('2');
 
+  // Combined Strategy (Third Strategy)
+  const [m1CombinedEnabled, setM1CombinedEnabled] = useState(false);
+  const [m1CombinedPatterns, setM1CombinedPatterns] = useState('');
+  const [m2CombinedEnabled, setM2CombinedEnabled] = useState(false);
+  const [m2CombinedPatterns, setM2CombinedPatterns] = useState('');
+
   const [vhFakeWins, setVhFakeWins] = useState(0);
   const [vhFakeLosses, setVhFakeLosses] = useState(0);
   const [vhConsecLosses, setVhConsecLosses] = useState(0);
@@ -1444,7 +1510,7 @@ export default function ProScannerBot() {
   const [m2DigitWindow, setM2DigitWindow] = useState('3');
 
   const [scannerActive, setScannerActive] = useState(false);
-  const [turboMode, setTurboMode] = useState(false);
+  const [turboMode, setTurboMode] = useState(true); // Default to true
   const [botName, setBotName] = useState('');
   const [turboLatency, setTurboLatency] = useState(0);
   const [ticksCaptured, setTicksCaptured] = useState(0);
@@ -1513,6 +1579,7 @@ export default function ProScannerBot() {
     slNotifiedRef.current = false;
     lastPnlRef.current = 0;
     patternTradeTakenRef.current = false;
+    combinedTradeTakenRef.current = false;
     shouldStopRef.current = false;
     savedBotStateRef.current = null;
   }, []);
@@ -1562,6 +1629,7 @@ export default function ProScannerBot() {
         vhConsecLosses: vhConsecLosses,
         vhStatus: vhStatus,
         patternTradeTaken: patternTradeTakenRef.current,
+        combinedTradeTaken: combinedTradeTakenRef.current,
       };
     }
   }, [isRunning, currentStake, martingaleStep, currentMarket, netProfit, localBalance, vhFakeWins, vhFakeLosses, vhConsecLosses, vhStatus]);
@@ -1578,6 +1646,7 @@ export default function ProScannerBot() {
       setVhConsecLosses(savedBotStateRef.current.vhConsecLosses);
       setVhStatus(savedBotStateRef.current.vhStatus);
       patternTradeTakenRef.current = savedBotStateRef.current.patternTradeTaken;
+      combinedTradeTakenRef.current = savedBotStateRef.current.combinedTradeTaken;
       
       const logId = ++logIdRef.current;
       addLog(logId, {
@@ -1713,6 +1782,12 @@ export default function ProScannerBot() {
     });
   }, []);
 
+  const checkCombinedPatternForSymbol = useCallback((symbol: string, patterns: string): boolean => {
+    if (!patterns || patterns.trim() === '') return false;
+    const digits = tickMapRef.current.get(symbol) || [];
+    return checkCombinedPattern(digits, patterns);
+  }, []);
+
   const checkStrategyForMarket = useCallback((symbol: string, market: 1 | 2): boolean => {
     const mode = market === 1 ? m1StrategyMode : m2StrategyMode;
     if (mode === 'pattern') {
@@ -1725,12 +1800,28 @@ export default function ProScannerBot() {
     return checkDigitConditionWith(symbol, cond, comp, win);
   }, [m1StrategyMode, m2StrategyMode, cleanM1Pattern, cleanM2Pattern, checkPatternMatchWith, checkDigitConditionWith, m1DigitCondition, m1DigitCompare, m1DigitWindow, m2DigitCondition, m2DigitCompare, m2DigitWindow]);
 
+  const checkCombinedForMarket = useCallback((symbol: string, market: 1 | 2): boolean => {
+    if (market === 1) {
+      return m1CombinedEnabled && checkCombinedPatternForSymbol(symbol, m1CombinedPatterns);
+    } else {
+      return m2CombinedEnabled && checkCombinedPatternForSymbol(symbol, m2CombinedPatterns);
+    }
+  }, [m1CombinedEnabled, m2CombinedEnabled, m1CombinedPatterns, m2CombinedPatterns, checkCombinedPatternForSymbol]);
+
   const findScannerMatchForMarket = useCallback((market: 1 | 2): string | null => {
     for (const m of SCANNER_MARKETS) {
       if (checkStrategyForMarket(m.symbol, market)) return m.symbol;
     }
     return null;
   }, [checkStrategyForMarket]);
+
+  const findScannerMatchForCombined = useCallback((market: 1 | 2): string | null => {
+    if (!scannerActive) return null;
+    for (const m of SCANNER_MARKETS) {
+      if (checkCombinedForMarket(m.symbol, market)) return m.symbol;
+    }
+    return null;
+  }, [scannerActive, checkCombinedForMarket]);
 
   const executeRealTrade = useCallback(async (
     cfg: { contract: string; barrier: string; symbol: string },
@@ -2001,6 +2092,7 @@ export default function ProScannerBot() {
       setVhConsecLosses(savedBotStateRef.current.vhConsecLosses);
       setVhStatus(savedBotStateRef.current.vhStatus);
       patternTradeTakenRef.current = savedBotStateRef.current.patternTradeTaken;
+      combinedTradeTakenRef.current = savedBotStateRef.current.combinedTradeTaken;
       savedBotStateRef.current = null;
     } else {
       const connected = await ensureConnection();
@@ -2118,6 +2210,8 @@ export default function ProScannerBot() {
     tpNotifiedRef.current = false;
     slNotifiedRef.current = false;
     lastPnlRef.current = currentPnlLocal;
+    patternTradeTakenRef.current = false;
+    combinedTradeTakenRef.current = false;
 
     let cStake = cStakeLocal;
     let mStep = mStepLocal;
@@ -2171,11 +2265,102 @@ export default function ProScannerBot() {
       const requiredLosses = parseInt(mkt === 1 ? m1VirtualLossCount : m2VirtualLossCount) || 3;
       const realCount = parseInt(mkt === 1 ? m1RealCount : m2RealCount) || 2;
 
+      // Check for combined strategy first (highest priority)
+      const combinedEnabled = mkt === 1 ? m1CombinedEnabled : m2CombinedEnabled;
+      const combinedPatterns = mkt === 1 ? m1CombinedPatterns : m2CombinedPatterns;
+      let combinedMatched = false;
+      let combinedMatchedSymbol = '';
+
+      if (combinedEnabled && combinedPatterns.trim() !== '') {
+        setBotStatus('waiting_pattern');
+        combinedMatched = false;
+        let attempts = 0;
+        const MAX_ATTEMPTS = 100;
+        
+        while (runningRef.current && !combinedMatched && attempts < MAX_ATTEMPTS && !shouldStopRef.current) {
+          if (!derivApi.isConnected) {
+            const reconnected = await ensureConnection();
+            if (!reconnected) break;
+          }
+          
+          if (scannerActive) {
+            const found = findScannerMatchForCombined(mkt);
+            if (found) { 
+              combinedMatched = true; 
+              combinedMatchedSymbol = found; 
+            }
+          } else {
+            if (checkCombinedForMarket(cfg.symbol, mkt)) { 
+              combinedMatched = true; 
+              combinedMatchedSymbol = cfg.symbol; 
+            }
+          }
+          if (!combinedMatched) {
+            await new Promise<void>(r => {
+              if (turboMode) requestAnimationFrame(() => r());
+              else setTimeout(r, 100);
+            });
+            attempts++;
+          }
+        }
+        
+        if (combinedMatched && runningRef.current && !shouldStopRef.current) {
+          setBotStatus('pattern_matched');
+          tradeSymbol = combinedMatchedSymbol;
+          if (!turboMode) await new Promise(r => setTimeout(r, 300));
+          
+          // Log combined pattern match
+          const combinedLogId = ++logIdRef.current;
+          addLog(combinedLogId, {
+            time: new Date().toLocaleTimeString(),
+            market: 'COMBINED',
+            symbol: tradeSymbol,
+            contract: cfg.contract,
+            stake: 0,
+            martingaleStep: 0,
+            exitDigit: '-',
+            result: 'Pending',
+            pnl: 0,
+            balance: currentBalance,
+            switchInfo: `🎯 COMBINED PATTERN MATCHED! Pattern: ${combinedPatterns} - Executing trade`,
+          });
+          
+          combinedTradeTakenRef.current = true;
+          
+          // Execute trade directly
+          const result = await executeRealTrade(
+            cfg, tradeSymbol, cStake, mStep, mkt, currentBalance, currentPnl, baseStakeLocal
+          );
+          if (result && runningRef.current) {
+            if (result.contractExecuted) {
+              currentPnl = result.localPnl;
+              currentBalance = result.localBalance;
+              cStake = result.cStake;
+              mStep = result.mStep;
+              inRecovery = result.inRecovery;
+            }
+            if (result.shouldBreak) {
+              shouldStopRef.current = true;
+              break;
+            }
+          }
+          combinedTradeTakenRef.current = false;
+          if (!turboMode) await new Promise(r => setTimeout(r, 400));
+          continue;
+        }
+      }
+
+      // Check regular strategy patterns (M1/M2)
+      if (combinedTradeTakenRef.current) {
+        combinedTradeTakenRef.current = false;
+        continue;
+      }
+
       if ((mkt === 2 && strategyEnabled) || (mkt === 1 && strategyM1Enabled)) {
         patternTradeTakenRef.current = false;
       }
 
-      if (inRecovery && strategyEnabled) {
+      if (inRecovery && strategyEnabled && !combinedMatched) {
         setBotStatus('waiting_pattern');
         let matched = false;
         let matchedSymbol = '';
@@ -2214,7 +2399,7 @@ export default function ProScannerBot() {
         tradeSymbol = matchedSymbol;
         if (!turboMode) await new Promise(r => setTimeout(r, 300));
       }
-      else if (!inRecovery && strategyM1Enabled) {
+      else if (!inRecovery && strategyM1Enabled && !combinedMatched) {
         setBotStatus('waiting_pattern');
         let matched = false;
         let attempts = 0;
@@ -2249,12 +2434,12 @@ export default function ProScannerBot() {
 
       if (shouldStopRef.current) break;
 
-      if (((inRecovery && strategyEnabled) || (!inRecovery && strategyM1Enabled)) && patternTradeTakenRef.current) {
+      if (((inRecovery && strategyEnabled) || (!inRecovery && strategyM1Enabled)) && patternTradeTakenRef.current && !combinedMatched) {
         patternTradeTakenRef.current = false;
         continue;
       }
 
-      if (hookEnabled) {
+      if (hookEnabled && !combinedMatched) {
         setBotStatus('virtual_hook');
         setVhStatus('waiting');
         setVhFakeWins(0);
@@ -2402,6 +2587,7 @@ export default function ProScannerBot() {
     runningRef.current = false;
     setBotStatus('idle');
     patternTradeTakenRef.current = false;
+    combinedTradeTakenRef.current = false;
     shouldStopRef.current = false;
     savedBotStateRef.current = null;
     
@@ -2409,12 +2595,12 @@ export default function ProScannerBot() {
   }, [isAuthorized, isRunning, stake, m1Enabled, m2Enabled, m1Contract, m2Contract,
     m1Barrier, m2Barrier, m1Symbol, m2Symbol, martingaleOn, martingaleMultiplier, martingaleMaxSteps,
     takeProfit, stopLoss, strategyEnabled, strategyM1Enabled, m1StrategyMode, m2StrategyMode, 
-    m1PatternValid, m2PatternValid, scannerActive, findScannerMatchForMarket, checkStrategyForMarket, 
-    addLog, updateLog, turboMode, m1HookEnabled, m2HookEnabled, m1VirtualLossCount, m2VirtualLossCount, 
-    m1RealCount, m2RealCount, ensureConnection, executeRealTrade, updateBalanceImmediately, 
-    balanceCache, refreshBalance, authBalance, currentStake, martingaleStep, currentMarket, 
-    netProfit, localBalance, vhFakeWins, vhFakeLosses, vhConsecLosses, vhStatus, saveBotState, 
-    restoreBotState]);
+    m1PatternValid, m2PatternValid, scannerActive, findScannerMatchForMarket, findScannerMatchForCombined,
+    checkStrategyForMarket, checkCombinedForMarket, addLog, updateLog, turboMode, m1HookEnabled, m2HookEnabled, 
+    m1VirtualLossCount, m2VirtualLossCount, m1RealCount, m2RealCount, ensureConnection, executeRealTrade, 
+    updateBalanceImmediately, balanceCache, refreshBalance, authBalance, currentStake, martingaleStep, 
+    currentMarket, netProfit, localBalance, vhFakeWins, vhFakeLosses, vhConsecLosses, vhStatus, saveBotState, 
+    restoreBotState, m1CombinedEnabled, m2CombinedEnabled, m1CombinedPatterns, m2CombinedPatterns]);
 
   const stopBot = useCallback(() => {
     shouldStopRef.current = true;
@@ -2422,6 +2608,7 @@ export default function ProScannerBot() {
     setIsRunning(false);
     setBotStatus('idle');
     patternTradeTakenRef.current = false;
+    combinedTradeTakenRef.current = false;
   }, []);
 
   const statusConfig: Record<BotStatus, { icon: string; label: string; color: string }> = {
@@ -2445,7 +2632,8 @@ export default function ProScannerBot() {
     strategy: { m1Enabled: strategyM1Enabled, m2Enabled: strategyEnabled, m1Mode: m1StrategyMode, m2Mode: m2StrategyMode, m1Pattern, m1DigitCondition, m1DigitCompare, m1DigitWindow, m2Pattern, m2DigitCondition, m2DigitCompare, m2DigitWindow },
     scanner: { active: scannerActive },
     turbo: { enabled: turboMode },
-  }), [m1Enabled, m1Symbol, m1Contract, m1Barrier, m1HookEnabled, m1VirtualLossCount, m1RealCount, m2Enabled, m2Symbol, m2Contract, m2Barrier, m2HookEnabled, m2VirtualLossCount, m2RealCount, stake, martingaleOn, martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss, strategyM1Enabled, strategyEnabled, m1StrategyMode, m2StrategyMode, m1Pattern, m1DigitCondition, m1DigitCompare, m1DigitWindow, m2Pattern, m2DigitCondition, m2DigitCompare, m2DigitWindow, scannerActive, turboMode]);
+    combined: { m1Enabled: m1CombinedEnabled, m2Enabled: m2CombinedEnabled, m1Patterns: m1CombinedPatterns, m2Patterns: m2CombinedPatterns },
+  }), [m1Enabled, m1Symbol, m1Contract, m1Barrier, m1HookEnabled, m1VirtualLossCount, m1RealCount, m2Enabled, m2Symbol, m2Contract, m2Barrier, m2HookEnabled, m2VirtualLossCount, m2RealCount, stake, martingaleOn, martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss, strategyM1Enabled, strategyEnabled, m1StrategyMode, m2StrategyMode, m1Pattern, m1DigitCondition, m1DigitCompare, m1DigitWindow, m2Pattern, m2DigitCondition, m2DigitCompare, m2DigitWindow, scannerActive, turboMode, m1CombinedEnabled, m2CombinedEnabled, m1CombinedPatterns, m2CombinedPatterns]);
 
   const handleLoadConfig = useCallback((cfg: BotConfig) => {
     if (cfg.m1) {
@@ -2490,6 +2678,12 @@ export default function ProScannerBot() {
     }
     if (cfg.scanner?.active !== undefined) setScannerActive(cfg.scanner.active);
     if (cfg.turbo?.enabled !== undefined) setTurboMode(cfg.turbo.enabled);
+    if ((cfg as any).combined) {
+      if ((cfg as any).combined.m1Enabled !== undefined) setM1CombinedEnabled((cfg as any).combined.m1Enabled);
+      if ((cfg as any).combined.m2Enabled !== undefined) setM2CombinedEnabled((cfg as any).combined.m2Enabled);
+      if ((cfg as any).combined.m1Patterns !== undefined) setM1CombinedPatterns((cfg as any).combined.m1Patterns);
+      if ((cfg as any).combined.m2Patterns !== undefined) setM2CombinedPatterns((cfg as any).combined.m2Patterns);
+    }
     if ((cfg as any).botName) setBotName((cfg as any).botName);
   }, []);
 
@@ -2559,8 +2753,8 @@ export default function ProScannerBot() {
               <Scan className="w-4 h-4 text-white" />
             </div>
             <div>
-              <h1 className="text-base font-bold bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent">Ramzfx Pro Scanner Bot</h1>
-              <p className="text-[10px] text-blue-300/80">Ramzfx Advanced Market Scanning & Recovery System</p>
+              <h1 className="text-base font-bold bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent">Milliefx Pro Scanner Bot</h1>
+              <p className="text-[10px] text-blue-300/80">Milliefx Advanced Market Scanning & Recovery System</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -2698,6 +2892,27 @@ export default function ProScannerBot() {
                     </div>
                   )}
                 </div>
+                {/* Combined Strategy for M1 */}
+                <div className="border-t border-border/30 pt-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] font-semibold text-green-400 flex items-center gap-1"><Combine className="w-3 h-3" /> Combined Strategy</span>
+                    <Switch checked={m1CombinedEnabled} onCheckedChange={setM1CombinedEnabled} disabled={isRunning} />
+                  </div>
+                  {m1CombinedEnabled && (
+                    <div className="mt-1">
+                      <Textarea 
+                        placeholder="Patterns: 1,5,11,112,321,1O,5U,3E,EEO,OOE (comma separated)" 
+                        value={m1CombinedPatterns} 
+                        onChange={e => setM1CombinedPatterns(e.target.value)} 
+                        disabled={isRunning} 
+                        className="h-16 text-[10px] font-mono"
+                      />
+                      <div className="text-[8px] text-muted-foreground mt-1">
+                        Examples: 1O (2nd last=1, last=Over), 5U (2nd last=5, last=Under), 112 (3rd last=1,2nd last=1,last=2), EEO (Even,Even,Odd)
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="bg-card border-2 border-purple-500/30 rounded-xl p-3 space-y-2">
@@ -2733,6 +2948,27 @@ export default function ProScannerBot() {
                       <div>
                         <label className="text-[8px] text-muted-foreground">Real Trades</label>
                         <Input type="number" min="1" max="10" value={m2RealCount} onChange={e => setM2RealCount(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
+                      </div>
+                    </div>
+                  )}
+                </div>
+                {/* Combined Strategy for M2 */}
+                <div className="border-t border-border/30 pt-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] font-semibold text-green-400 flex items-center gap-1"><Combine className="w-3 h-3" /> Combined Strategy</span>
+                    <Switch checked={m2CombinedEnabled} onCheckedChange={setM2CombinedEnabled} disabled={isRunning} />
+                  </div>
+                  {m2CombinedEnabled && (
+                    <div className="mt-1">
+                      <Textarea 
+                        placeholder="Patterns: 1,5,11,112,321,1O,5U,3E,EEO,OOE (comma separated)" 
+                        value={m2CombinedPatterns} 
+                        onChange={e => setM2CombinedPatterns(e.target.value)} 
+                        disabled={isRunning} 
+                        className="h-16 text-[10px] font-mono"
+                      />
+                      <div className="text-[8px] text-muted-foreground mt-1">
+                        Examples: 1O (2nd last=1, last=Over), 5U (2nd last=5, last=Under), 112 (3rd last=1,2nd last=1,last=2), EEO (Even,Even,Odd)
                       </div>
                     </div>
                   )}
@@ -2872,7 +3108,7 @@ export default function ProScannerBot() {
                     )}
                   </div>
                 )}
-                {botStatus === 'waiting_pattern' && (
+                {(botStatus === 'waiting_pattern' && (strategyEnabled || strategyM1Enabled)) && (
                   <div className="bg-yellow-500/10 border border-yellow-500/30 rounded p-1.5 text-[9px] text-yellow-500 animate-pulse text-center font-semibold">⏳ WAITING FOR PATTERN...</div>
                 )}
                 {botStatus === 'pattern_matched' && (
@@ -2888,7 +3124,7 @@ export default function ProScannerBot() {
               <div className="grid grid-cols-2 gap-2">
                 <Button size="sm" variant="outline" className="h-7 text-[10px] gap-1" disabled={isRunning || !botName.trim()} onClick={() => {
                   const safeName = botName.trim().replace(/[^a-zA-Z0-9_-]/g, '_');
-                  const config = { version: 1, botName: botName.trim(), m1: { enabled: m1Enabled, symbol: m1Symbol, contract: m1Contract, barrier: m1Barrier, hookEnabled: m1HookEnabled, virtualLossCount: m1VirtualLossCount, realCount: m1RealCount }, m2: { enabled: m2Enabled, symbol: m2Symbol, contract: m2Contract, barrier: m2Barrier, hookEnabled: m2HookEnabled, virtualLossCount: m2VirtualLossCount, realCount: m2RealCount }, risk: { stake, martingaleOn, martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss }, strategy: { m1Enabled: strategyM1Enabled, m2Enabled: strategyEnabled, m1Mode: m1StrategyMode, m2Mode: m2StrategyMode, m1Pattern, m1DigitCondition, m1DigitCompare, m1DigitWindow, m2Pattern, m2DigitCondition, m2DigitCompare, m2DigitWindow }, scanner: { active: scannerActive }, turbo: { enabled: turboMode } };
+                  const config = { version: 1, botName: botName.trim(), m1: { enabled: m1Enabled, symbol: m1Symbol, contract: m1Contract, barrier: m1Barrier, hookEnabled: m1HookEnabled, virtualLossCount: m1VirtualLossCount, realCount: m1RealCount }, m2: { enabled: m2Enabled, symbol: m2Symbol, contract: m2Contract, barrier: m2Barrier, hookEnabled: m2HookEnabled, virtualLossCount: m2VirtualLossCount, realCount: m2RealCount }, risk: { stake, martingaleOn, martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss }, strategy: { m1Enabled: strategyM1Enabled, m2Enabled: strategyEnabled, m1Mode: m1StrategyMode, m2Mode: m2StrategyMode, m1Pattern, m1DigitCondition, m1DigitCompare, m1DigitWindow, m2Pattern, m2DigitCondition, m2DigitCompare, m2DigitWindow }, scanner: { active: scannerActive }, turbo: { enabled: turboMode }, combined: { m1Enabled: m1CombinedEnabled, m2Enabled: m2CombinedEnabled, m1Patterns: m1CombinedPatterns, m2Patterns: m2CombinedPatterns } };
                   const ts = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
                   const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
                   const url = URL.createObjectURL(blob);
@@ -3086,7 +3322,7 @@ export default function ProScannerBot() {
                   </div>
                 </div>
               )}
-              {botStatus === 'waiting_pattern' && (
+              {(botStatus === 'waiting_pattern' && (strategyEnabled || strategyM1Enabled || m1CombinedEnabled || m2CombinedEnabled)) && (
                 <div className="mt-2 text-center bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-1.5">
                   <div className="text-[9px] text-yellow-500 animate-pulse flex items-center justify-center gap-2">
                     <Scan className="w-3 h-3" />
@@ -3155,6 +3391,7 @@ export default function ProScannerBot() {
                         e.market === 'M1' ? 'border-l-2 border-l-blue-500' :
                         e.market === 'VH' ? 'border-l-2 border-l-indigo-500' :
                         e.market === 'SYSTEM' ? 'border-l-2 border-l-orange-500' :
+                        e.market === 'COMBINED' ? 'border-l-2 border-l-green-500' :
                         'border-l-2 border-l-purple-500'
                       }`}>
                         <td className="p-2 font-mono text-[9px] text-muted-foreground">{e.time}</td>
@@ -3162,6 +3399,7 @@ export default function ProScannerBot() {
                           e.market === 'M1' ? 'text-blue-400' :
                           e.market === 'VH' ? 'text-indigo-400' :
                           e.market === 'SYSTEM' ? 'text-orange-500' :
+                          e.market === 'COMBINED' ? 'text-green-400' :
                           'text-purple-400'
                         }`}>{e.market}</td>
                         <td className="p-2 font-mono text-[9px] text-foreground">{e.symbol}</td>
@@ -3171,10 +3409,12 @@ export default function ProScannerBot() {
                             <span className="text-indigo-400">FAKE</span>
                           ) : e.market === 'SYSTEM' ? (
                             <span className="text-orange-500">SYS</span>
+                          ) : e.market === 'COMBINED' ? (
+                            <span className="text-green-400">CBT</span>
                           ) : (
                             <span className="text-foreground">${e.stake.toFixed(2)}</span>
                           )}
-                          {e.martingaleStep > 0 && e.market !== 'VH' && e.market !== 'SYSTEM' && <span className="text-warning ml-1 font-bold">M{e.martingaleStep}</span>}
+                          {e.martingaleStep > 0 && e.market !== 'VH' && e.market !== 'SYSTEM' && e.market !== 'COMBINED' && <span className="text-warning ml-1 font-bold">M{e.martingaleStep}</span>}
                         </td>
                         <td className="p-2 text-center font-mono text-[10px] font-bold">{e.exitDigit}</td>
                         <td className="p-2 text-center">
