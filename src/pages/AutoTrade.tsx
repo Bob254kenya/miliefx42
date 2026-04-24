@@ -16,7 +16,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import {
   TrendingUp, TrendingDown, Activity, BarChart3, ArrowUp, ArrowDown, Minus,
   Target, ShieldAlert, Gauge, Volume2, VolumeX, Clock, Zap, Trophy, Play, Pause, StopCircle, Eye, EyeOff, RefreshCw,
-  Plus, X, LineChart, Anchor, Copy, Users, Wifi, WifiOff
+  Plus, X, LineChart, Anchor, Copy, Users, Wifi, WifiOff, Combine
 } from 'lucide-react';
 
 // ============================================
@@ -690,6 +690,64 @@ const checkConnection = async (): Promise<boolean> => {
   return true;
 };
 
+// ============================================
+// PATTERN PARSING FUNCTIONS FOR COMBINED STRATEGY
+// ============================================
+
+type PatternToken = 
+  | { type: 'digit'; value: number }
+  | { type: 'eo'; value: 'E' | 'O' }
+  | { type: 'ou'; value: 'O' | 'U' }; // Over/Under
+
+function parseCombinedPattern(patternStr: string): PatternToken[] | null {
+  const trimmed = patternStr.trim().toUpperCase();
+  if (trimmed.length === 0) return null;
+  
+  const tokens: PatternToken[] = [];
+  for (let i = 0; i < trimmed.length; i++) {
+    const ch = trimmed[i];
+    if (ch >= '0' && ch <= '9') {
+      tokens.push({ type: 'digit', value: parseInt(ch, 10) });
+    } else if (ch === 'E' || ch === 'O') {
+      tokens.push({ type: 'eo', value: ch });
+    } else if (ch === 'U') {
+      tokens.push({ type: 'ou', value: 'U' });
+    } else {
+      return null;
+    }
+  }
+  return tokens;
+}
+
+function checkPatternMatch(ticks: number[], tickPrices: number[], tokens: PatternToken[]): boolean {
+  if (ticks.length < tokens.length) return false;
+  
+  const recentDigits = ticks.slice(-tokens.length);
+  const recentPrices = tickPrices.slice(-tokens.length);
+  
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    const digit = recentDigits[i];
+    const price = recentPrices[i];
+    const prevPrice = i > 0 ? recentPrices[i - 1] : undefined;
+    
+    switch (token.type) {
+      case 'digit':
+        if (digit !== token.value) return false;
+        break;
+      case 'eo':
+        const isEven = digit % 2 === 0;
+        if ((token.value === 'E' && !isEven) || (token.value === 'O' && isEven)) return false;
+        break;
+      case 'ou':
+        const isOver = digit > 4;
+        if ((token.value === 'O' && !isOver) || (token.value === 'U' && isOver)) return false;
+        break;
+    }
+  }
+  return true;
+}
+
 export default function TradingChart() {
   const { isAuthorized, balance: apiBalance, refreshBalance } = useAuth();
   const [showChart, setShowChart] = useState(false);
@@ -741,11 +799,13 @@ export default function TradingChart() {
   const lastSpokenSignal = useRef('');
 
   const [strategyEnabled, setStrategyEnabled] = useState(false);
-  const [strategyMode, setStrategyMode] = useState<'pattern' | 'digit'>('pattern');
+  const [strategyMode, setStrategyMode] = useState<'pattern' | 'digit' | 'combined'>('pattern');
   const [patternInput, setPatternInput] = useState('');
   const [digitCondition, setDigitCondition] = useState('==');
   const [digitCompare, setDigitCompare] = useState('5');
   const [digitWindow, setDigitWindow] = useState('3');
+  const [combinedPatterns, setCombinedPatterns] = useState<string>('');
+  const [useOrLogic, setUseOrLogic] = useState(false); // true = OR, false = AND (all patterns must match)
 
   const [botRunning, setBotRunning] = useState(false);
   const [botPaused, setBotPaused] = useState(false);
@@ -766,9 +826,10 @@ export default function TradingChart() {
     maxTrades: '50',
   });
   const [botStats, setBotStats] = useState({ trades: 0, wins: 0, losses: 0, pnl: 0, currentStake: 0, consecutiveLosses: 0 });
-  const [turboMode, setTurboMode] = useState(false);
+  const [turboMode, setTurboMode] = useState(true); // TURBO MODE DEFAULT TRUE
 
   const [displaySymbols, setDisplaySymbols] = useState<string[]>([]);
+  const [showNumbersInFiltration, setShowNumbersInFiltration] = useState(false); // Toggle for showing numbers
 
   // ============================================
   // VIRTUAL HOOK STATE VARIABLES
@@ -1067,45 +1128,71 @@ export default function TradingChart() {
   const cleanPattern = patternInput.toUpperCase().replace(/[^EO]/g, '');
   const patternValid = cleanPattern.length >= 2;
 
+  // ============================================
+  // COMBINED STRATEGY PARSING
+  // ============================================
+  const parsedPatterns = useMemo(() => {
+    if (!combinedPatterns.trim()) return [];
+    const patterns = combinedPatterns.split(',').map(p => p.trim().toUpperCase()).filter(p => p.length > 0);
+    return patterns.map(p => parseCombinedPattern(p)).filter((p): p is PatternToken[] => p !== null);
+  }, [combinedPatterns]);
+
   const checkPatternMatch = useCallback((): boolean => {
     const ticks = getTickHistory(botConfig.botSymbol);
-    if (ticks.length < cleanPattern.length) return false;
-    const recent = ticks.slice(-cleanPattern.length);
-    for (let i = 0; i < cleanPattern.length; i++) {
-      const expected = cleanPattern[i];
-      const actual = recent[i] % 2 === 0 ? 'E' : 'O';
-      if (expected !== actual) return false;
-    }
-    return true;
-  }, [botConfig.botSymbol, cleanPattern]);
-
-  const checkDigitCondition = useCallback((): boolean => {
-    const ticks = getTickHistory(botConfig.botSymbol);
-    const win = parseInt(digitWindow) || 3;
-    const comp = parseInt(digitCompare);
-    if (ticks.length < win) return false;
-    const recent = ticks.slice(-win);
-    return recent.every(d => {
-      switch (digitCondition) {
-        case '>': return d > comp;
-        case '<': return d < comp;
-        case '>=': return d >= comp;
-        case '<=': return d <= comp;
-        case '==': return d === comp;
-        case '!=': return d !== comp;
-        default: return false;
+    const tickPrices = getTickPrices(botConfig.botSymbol);
+    if (ticks.length < 2) return false;
+    
+    // Original E/O pattern strategy
+    if (strategyMode === 'pattern') {
+      if (ticks.length < cleanPattern.length) return false;
+      const recent = ticks.slice(-cleanPattern.length);
+      for (let i = 0; i < cleanPattern.length; i++) {
+        const expected = cleanPattern[i];
+        const actual = recent[i] % 2 === 0 ? 'E' : 'O';
+        if (expected !== actual) return false;
       }
-    });
-  }, [botConfig.botSymbol, digitCondition, digitCompare, digitWindow]);
+      return true;
+    }
+    
+    // Digit condition strategy
+    if (strategyMode === 'digit') {
+      const win = parseInt(digitWindow) || 3;
+      const comp = parseInt(digitCompare);
+      if (ticks.length < win) return false;
+      const recent = ticks.slice(-win);
+      return recent.every(d => {
+        switch (digitCondition) {
+          case '>': return d > comp;
+          case '<': return d < comp;
+          case '>=': return d >= comp;
+          case '<=': return d <= comp;
+          case '==': return d === comp;
+          case '!=': return d !== comp;
+          default: return false;
+        }
+      });
+    }
+    
+    // Combined strategy (multiple patterns)
+    if (strategyMode === 'combined') {
+      if (parsedPatterns.length === 0) return true;
+      
+      if (useOrLogic) {
+        // OR: any pattern matches
+        return parsedPatterns.some(patterns => checkPatternMatch(ticks, tickPrices, patterns));
+      } else {
+        // AND: all patterns must match (using sliding window for each pattern)
+        return parsedPatterns.every(patterns => checkPatternMatch(ticks, tickPrices, patterns));
+      }
+    }
+    
+    return true;
+  }, [botConfig.botSymbol, cleanPattern, strategyMode, digitWindow, digitCondition, digitCompare, parsedPatterns, useOrLogic]);
 
   const checkStrategyCondition = useCallback((): boolean => {
     if (!strategyEnabled) return true;
-    if (strategyMode === 'pattern') {
-      return checkPatternMatch();
-    } else {
-      return checkDigitCondition();
-    }
-  }, [strategyEnabled, strategyMode, checkPatternMatch, checkDigitCondition]);
+    return checkPatternMatch();
+  }, [strategyEnabled, checkPatternMatch]);
 
   // Helper function to get outcome symbol for trade
   const getOutcomeSymbol = useCallback((trade: TradeRecord): string => {
@@ -2216,7 +2303,7 @@ export default function TradingChart() {
           {/* Digit Analysis - Real-Time Updates */}
           <div className="bg-card border border-border rounded-xl p-3 space-y-3">
             <div className="flex items-center justify-between">
-              <h3 className="text-xs font-semibold text-foreground">Ramzfx Digit Analysis (Real-Time)</h3>
+              <h3 className="text-xs font-semibold text-foreground">Milliefx Digit Analysis (Real-Time)</h3>
               <div className="flex items-center gap-2">
                 <label className="text-[9px] text-muted-foreground">Tick Range:</label>
                 <Select value={String(tickRange)} onValueChange={v => setTickRange(parseInt(v))}>
@@ -2589,11 +2676,11 @@ export default function TradingChart() {
               )}
             </div>
 
-            {/* Strategy Section */}
+            {/* Strategy Section with Combined Mode */}
             <div className="border-t border-border pt-2 mt-1">
               <div className="flex items-center justify-between mb-2">
                 <label className="text-[10px] font-semibold text-warning flex items-center gap-1">
-                  <Zap className="w-3 h-3" /> Pattern/Digit Strategy
+                  <Combine className="w-3 h-3" /> Pattern/Digit/Combined Strategy
                 </label>
                 <Switch checked={strategyEnabled} onCheckedChange={setStrategyEnabled} disabled={botRunning} />
               </div>
@@ -2619,6 +2706,15 @@ export default function TradingChart() {
                     >
                       Digit Condition 
                     </Button>
+                    <Button
+                      size="sm"
+                      variant={strategyMode === 'combined' ? 'default' : 'outline'}
+                      className="text-[9px] h-6 px-2 flex-1"
+                      onClick={() => setStrategyMode('combined')}
+                      disabled={botRunning}
+                    >
+                      <Combine className="w-2.5 h-2.5 mr-0.5" /> Combined
+                    </Button>
                   </div>
 
                   {strategyMode === 'pattern' ? (
@@ -2636,7 +2732,7 @@ export default function TradingChart() {
                           patternValid ? `✓ Pattern: ${cleanPattern}` : `✗ Need at least 2 characters (E/O)`}
                       </div>
                     </div>
-                  ) : (
+                  ) : strategyMode === 'digit' ? (
                     <div className="grid grid-cols-3 gap-1">
                       <div>
                         <label className="text-[8px] text-muted-foreground">If last </label>
@@ -2660,10 +2756,63 @@ export default function TradingChart() {
                           className="h-7 text-[10px]" />
                       </div>
                     </div>
+                  ) : (
+                    // Combined Strategy UI
+                    <div className="space-y-2">
+                      <div>
+                        <label className="text-[8px] text-muted-foreground">Patterns (comma separated)</label>
+                        <Textarea
+                          placeholder="e.g., 11O, 99U, 112, 232, EEEOE, OOEEO, 1O, 2E, 5U"
+                          value={combinedPatterns}
+                          onChange={e => setCombinedPatterns(e.target.value.toUpperCase())}
+                          disabled={botRunning}
+                          className="h-20 text-[10px] font-mono min-h-0 mt-1"
+                        />
+                        <div className="text-[8px] text-muted-foreground mt-1">
+                          Formats: digits(0-9), E/O (Even/Odd), O/U (Over/Under). Example: "11O" means last two digits are 1 and 1, last is Over.
+                        </div>
+                        {parsedPatterns.length > 0 && (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {parsedPatterns.map((p, idx) => (
+                              <Badge key={idx} variant="outline" className="text-[8px] font-mono">
+                                {combinedPatterns.split(',')[idx].trim()}
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
+                        {combinedPatterns.length > 0 && parsedPatterns.length === 0 && (
+                          <div className="text-[8px] text-loss mt-1">Invalid patterns. Use digits(0-9), E/O, O/U only.</div>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <label className="text-[8px] text-muted-foreground">Match Logic:</label>
+                        <Button
+                          size="sm"
+                          variant={!useOrLogic ? 'default' : 'outline'}
+                          className="text-[8px] h-5 px-2"
+                          onClick={() => setUseOrLogic(false)}
+                          disabled={botRunning}
+                        >
+                          AND (All)
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant={useOrLogic ? 'default' : 'outline'}
+                          className="text-[8px] h-5 px-2"
+                          onClick={() => setUseOrLogic(true)}
+                          disabled={botRunning}
+                        >
+                          OR (Any)
+                        </Button>
+                      </div>
+                      <div className="text-[8px] text-muted-foreground text-center py-1">
+                        {useOrLogic ? 'Any pattern match triggers trade' : 'All patterns must match to trade'}
+                      </div>
+                    </div>
                   )}
 
                   <div className="text-[8px] text-muted-foreground text-center py-1">
-                    Bot will wait for {strategyMode === 'pattern' ? 'pattern match' : 'digit condition'} before each trade
+                    Bot will wait for condition before each trade
                   </div>
                 </div>
               )}
@@ -2724,11 +2873,19 @@ export default function TradingChart() {
             </div>
           </div>
 
-          {/* Last 26 Digits - Filtration Chamber */}
+          {/* Last 26 Digits - Filtration Chamber with Number Toggle */}
           <div className="bg-card border border-border rounded-xl p-3">
             <h3 className="text-xs font-semibold text-foreground mb-2 flex items-center justify-between">
               <span>Ramzfx Filtration Chamber 🚆</span>
               <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-[8px] h-6 px-2"
+                  onClick={() => setShowNumbersInFiltration(!showNumbersInFiltration)}
+                >
+                  {showNumbersInFiltration ? 'Hide Numbers' : 'Show Numbers'}
+                </Button>
                 <Badge variant="outline" className="text-[8px] animate-pulse">
                   🟢 LIVE
                 </Badge>
@@ -2843,30 +3000,52 @@ export default function TradingChart() {
               {displaySymbols.length > 0 ? (
                 displaySymbols.map((symbol, i) => {
                   const isLast = i === displaySymbols.length - 1;
+                  const actualDigit = digitStats.last26Digits[i];
+                  const actualDigitForOverUnder = actualDigit !== undefined ? actualDigit : -1;
                   
                   let bgColor = '';
                   let textColor = '';
                   
-                  // Color mapping based on symbol meaning
-                  if (symbol === 'R' || symbol === 'U') {
-                    bgColor = 'bg-profit/20';
-                    textColor = 'text-profit';
-                  } else if (symbol === 'F' || symbol === 'O') {
-                    bgColor = 'bg-loss/20';
-                    textColor = 'text-loss';
-                  } else if (symbol === 'E') {
-                    bgColor = 'bg-[#3FB950]/20';
-                    textColor = 'text-[#3FB950]';
-                  } else if (symbol === 'S') {
-                    bgColor = 'bg-primary/20';
-                    textColor = 'text-primary';
-                  } else if (symbol === 'D') {
-                    bgColor = 'bg-[#D29922]/20';
-                    textColor = 'text-[#D29922]';
+                  // Color mapping based on symbol meaning with Over/Under special handling when showing numbers
+                  if (showNumbersInFiltration && actualDigitForOverUnder !== -1) {
+                    // Show numbers mode: Over digits (5-9) green, Under digits (0-4) red, other specials stay consistent
+                    if (actualDigitForOverUnder > 4) {
+                      bgColor = 'bg-profit/30';
+                      textColor = 'text-profit';
+                    } else {
+                      bgColor = 'bg-loss/30';
+                      textColor = 'text-loss';
+                    }
                   } else {
-                    bgColor = 'bg-muted/20';
-                    textColor = 'text-foreground';
+                    // Normal symbol mode
+                    if (symbol === 'R' || symbol === 'U') {
+                      bgColor = 'bg-profit/20';
+                      textColor = 'text-profit';
+                    } else if (symbol === 'F' || symbol === 'O') {
+                      bgColor = 'bg-loss/20';
+                      textColor = 'text-loss';
+                    } else if (symbol === 'E') {
+                      bgColor = 'bg-[#3FB950]/20';
+                      textColor = 'text-[#3FB950]';
+                    } else if (symbol === 'S') {
+                      bgColor = 'bg-primary/20';
+                      textColor = 'text-primary';
+                    } else if (symbol === 'D') {
+                      bgColor = 'bg-[#D29922]/20';
+                      textColor = 'text-[#D29922]';
+                    } else if (symbol === 'C') {
+                      bgColor = 'bg-[#58A6FF]/20';
+                      textColor = 'text-[#58A6FF]';
+                    } else {
+                      bgColor = 'bg-muted/20';
+                      textColor = 'text-foreground';
+                    }
                   }
+                  
+                  // Display either symbol or the actual digit
+                  const displayValue = showNumbersInFiltration && actualDigitForOverUnder !== -1 
+                    ? actualDigitForOverUnder.toString() 
+                    : symbol;
                   
                   return (
                     <motion.div
@@ -2886,7 +3065,7 @@ export default function TradingChart() {
                         'border-border'
                       }`}
                     >
-                      {symbol}
+                      {displayValue}
                     </motion.div>
                   );
                 })
@@ -2898,6 +3077,7 @@ export default function TradingChart() {
             </div>
             <div className="text-center text-[8px] text-muted-foreground mt-2">
               🔄 Updates with every tick • Latest digit highlighted
+              {showNumbersInFiltration && " • Over (5-9) Green | Under (0-4) Red"}
             </div>
           </div>
 
