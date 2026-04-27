@@ -1,25 +1,7 @@
-// =============================
-// CONFIG
-// =============================
-const DERIV_APP_ID = 131037;
+const DERIV_APP_ID = 131592;
 const DERIV_WS_URL = `wss://ws.derivws.com/websockets/v3?app_id=${DERIV_APP_ID}`;
+const DERIV_OAUTH_URL = `https://oauth.deriv.com/oauth2/authorize?app_id=${DERIV_APP_ID}`;
 
-// Generate secure state
-function generateState(): string {
-  return Math.random().toString(36).substring(2) + Date.now();
-}
-
-// OAuth URL (FIXED - removed duplicate)
-export function getOAuthUrl(): string {
-  const state = generateState();
-  localStorage.setItem('oauth_state', state);
-
-  return `https://oauth.deriv.com/oauth2/authorize?app_id=${DERIV_APP_ID}&redirect_uri=${encodeURIComponent(window.location.origin)}&response_type=token&scope=read,trade&state=${state}`;
-}
-
-// =============================
-// TYPES
-// =============================
 export interface DerivAccount {
   loginid: string;
   token: string;
@@ -43,6 +25,23 @@ export interface AuthorizeResponse {
   };
 }
 
+export interface TickData {
+  tick: {
+    symbol: string;
+    epoch: number;
+    quote: number;
+    ask: number;
+    bid: number;
+  };
+}
+
+export interface TickHistoryResponse {
+  history: {
+    prices: number[];
+    times: number[];
+  };
+}
+
 export interface ContractResult {
   contractId: string;
   profit: number;
@@ -54,92 +53,48 @@ export interface ContractResult {
 
 export type MessageHandler = (data: any) => void;
 
-// =============================
-// MAIN CLASS
-// =============================
 class DerivAPI {
   private ws: WebSocket | null = null;
   private reqId = 0;
-  private handlers = new Map<number, (data: any) => void>();
-  private subscriptionHandlers = new Map<string, MessageHandler[]>();
-  private tickSubscriptions = new Map<string, string>();
+  private handlers: Map<number, (data: any) => void> = new Map();
+  private subscriptionHandlers: Map<string, MessageHandler[]> = new Map();
   private globalHandlers: MessageHandler[] = [];
   private connected = false;
   private connectPromise: Promise<void> | null = null;
-  private activeCurrency: string = 'USD';
-  private reconnectTimer: number | null = null;
 
-  get isConnected() {
-    return this.connected;
-  }
+  get isConnected() { return this.connected; }
 
-  setActiveCurrency(currency: string) {
-    this.activeCurrency = currency;
-  }
-
-  // =============================
-  // CONNECT (AUTO RECONNECT)
-  // =============================
   connect(): Promise<void> {
     if (this.connectPromise) return this.connectPromise;
-
+    
     this.connectPromise = new Promise((resolve, reject) => {
       this.ws = new WebSocket(DERIV_WS_URL);
-
+      
       this.ws.onopen = () => {
         this.connected = true;
-        if (this.reconnectTimer) {
-          clearTimeout(this.reconnectTimer);
-          this.reconnectTimer = null;
-        }
         resolve();
       };
 
       this.ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
-
-        // Handle request responses
+        
         if (data.req_id && this.handlers.has(data.req_id)) {
-          const handler = this.handlers.get(data.req_id);
-          if (handler) {
-            handler(data);
-            this.handlers.delete(data.req_id);
-          }
+          this.handlers.get(data.req_id)!(data);
+          this.handlers.delete(data.req_id);
         }
 
-        // Handle tick messages
         if (data.tick) {
           const symbol = data.tick.symbol;
-          const handlers = this.subscriptionHandlers.get(symbol);
-          if (handlers) {
-            handlers.forEach(h => h(data));
-          }
+          const handlers = this.subscriptionHandlers.get(symbol) || [];
+          handlers.forEach(h => h(data));
         }
 
-        // Handle balance updates
-        if (data.balance) {
-          this.globalHandlers.forEach(h => h(data));
-        }
-
-        // Handle proposal open contract updates
-        if (data.proposal_open_contract) {
-          this.globalHandlers.forEach(h => h(data));
-        }
+        this.globalHandlers.forEach(h => h(data));
       };
 
       this.ws.onclose = () => {
         this.connected = false;
         this.connectPromise = null;
-
-        // AUTO RECONNECT
-        if (this.reconnectTimer === null) {
-          this.reconnectTimer = window.setTimeout(() => {
-            this.reconnectTimer = null;
-            if (!this.connected) {
-              this.connect().catch(() => {});
-            }
-          }, 2000);
-        }
       };
 
       this.ws.onerror = (err) => {
@@ -153,402 +108,276 @@ class DerivAPI {
   }
 
   disconnect() {
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-    
     if (this.ws) {
       this.ws.close();
       this.ws = null;
+      this.connected = false;
+      this.connectPromise = null;
+      this.handlers.clear();
+      this.subscriptionHandlers.clear();
     }
-    
-    this.connected = false;
-    this.connectPromise = null;
-    this.handlers.clear();
-    this.subscriptionHandlers.clear();
-    this.tickSubscriptions.clear();
-    this.globalHandlers = [];
-    this.reqId = 0;
   }
 
-  // =============================
-  // SAFE SEND (AUTO CONNECT)
-  // =============================
-  private async send(data: any): Promise<any> {
-    if (!this.connected) {
-      await this.connect();
-    }
-
+  private send(data: any): Promise<any> {
     return new Promise((resolve, reject) => {
       if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
         reject(new Error('WebSocket not connected'));
         return;
       }
-
       const reqId = ++this.reqId;
       data.req_id = reqId;
-
-      const timeoutId = setTimeout(() => {
+      this.handlers.set(reqId, resolve);
+      this.ws.send(JSON.stringify(data));
+      
+      setTimeout(() => {
         if (this.handlers.has(reqId)) {
           this.handlers.delete(reqId);
-          reject(new Error(`Request timeout for ${Object.keys(data)[0]}`));
+          reject(new Error('Request timeout'));
         }
       }, 30000);
-
-      this.handlers.set(reqId, (response) => {
-        clearTimeout(timeoutId);
-        resolve(response);
-      });
-      
-      try {
-        this.ws.send(JSON.stringify(data));
-      } catch (error) {
-        clearTimeout(timeoutId);
-        this.handlers.delete(reqId);
-        reject(error);
-      }
     });
   }
 
-  // =============================
-  // AUTH
-  // =============================
   async authorize(token: string): Promise<AuthorizeResponse> {
+    await this.connect();
     const response = await this.send({ authorize: token });
-
-    if (response.error) {
-      throw new Error(response.error.message || response.error.code);
-    }
-
-    if (response.authorize?.currency) {
-      this.setActiveCurrency(response.authorize.currency);
-    }
-
+    if (response.error) throw new Error(response.error.message);
     return response;
   }
 
-  // =============================
-  // BALANCE STREAM
-  // =============================
-  async subscribeBalance(handler: MessageHandler): Promise<() => void> {
-    await this.send({ balance: 1, subscribe: 1 });
-
-    const balanceHandler = (data: any) => {
-      if (data.balance) handler(data);
-    };
-    
-    this.globalHandlers.push(balanceHandler);
-    
-    // Return unsubscribe function
-    return () => {
-      const index = this.globalHandlers.indexOf(balanceHandler);
-      if (index !== -1) {
-        this.globalHandlers.splice(index, 1);
-      }
-    };
+  async getBalance(): Promise<any> {
+    const response = await this.send({ balance: 1, subscribe: 1 });
+    if (response.error) throw new Error(response.error.message);
+    return response;
   }
 
-  // =============================
-  // TICKS
-  // =============================
-  async subscribeTicks(symbol: string, handler: MessageHandler): Promise<void> {
-    const list = this.subscriptionHandlers.get(symbol) || [];
-    list.push(handler);
-    this.subscriptionHandlers.set(symbol, list);
+  async subscribeTicks(symbol: string, handler: MessageHandler) {
+    const existing = this.subscriptionHandlers.get(symbol) || [];
+    existing.push(handler);
+    this.subscriptionHandlers.set(symbol, existing);
 
-    if (list.length === 1) {
-      const res = await this.send({ ticks: symbol, subscribe: 1 });
-      if (res.subscription?.id) {
-        this.tickSubscriptions.set(symbol, res.subscription.id);
-      }
+    if (existing.length === 1) {
+      await this.send({ ticks: symbol, subscribe: 1 });
     }
   }
 
-  async unsubscribeTicks(symbol: string): Promise<void> {
+  async unsubscribeTicks(symbol: string) {
     this.subscriptionHandlers.delete(symbol);
-
-    const subId = this.tickSubscriptions.get(symbol);
-    if (subId) {
-      await this.send({ forget: subId });
-      this.tickSubscriptions.delete(symbol);
-    }
+    try {
+      await this.send({ forget_all: 'ticks' });
+    } catch {}
   }
 
-  // =============================
-  // GET CONTRACT PROPOSAL
-  // =============================
-  async getProposal(params: {
-    amount: number;
+  async getTickHistory(symbol: string, count: number = 100): Promise<TickHistoryResponse> {
+    const response = await this.send({
+      ticks_history: symbol,
+      count,
+      end: 'latest',
+      style: 'ticks',
+    });
+    if (response.error) throw new Error(response.error.message);
+    return response;
+  }
+
+  /**
+   * Buy a contract and return the contract_id immediately.
+   * Does NOT wait for the contract to settle.
+   */
+  async buyContract(params: {
     contract_type: string;
+    symbol: string;
     duration: number;
     duration_unit: string;
-    symbol: string;
-    currency?: string;
-  }): Promise<any> {
-    const response = await this.send({
+    basis: string;
+    amount: number;
+    barrier?: string;
+  }): Promise<{ contractId: string; buyPrice: number }> {
+    // Step 1: Get proposal
+    const proposalReq: any = {
       proposal: 1,
-      amount: params.amount,
-      basis: 'stake',
       contract_type: params.contract_type,
-      currency: params.currency || this.activeCurrency,
+      symbol: params.symbol,
       duration: params.duration,
       duration_unit: params.duration_unit,
-      symbol: params.symbol,
-    });
-
-    if (response.error) {
-      throw new Error(response.error.message);
+      basis: params.basis,
+      amount: params.amount,
+      currency: 'USD',
+    };
+    if (params.barrier !== undefined) {
+      proposalReq.barrier = params.barrier;
     }
 
-    return response;
-  }
+    const proposal = await this.send(proposalReq);
+    if (proposal.error) throw new Error(proposal.error.message);
 
-  // =============================
-  // BUY CONTRACT
-  // =============================
-  async buyContract(params: {
-    amount: number;
-    contract_type: string;
-    duration: number;
-    duration_unit: string;
-    symbol: string;
-    currency?: string;
-  }): Promise<{ contractId: string; buyPrice: number }> {
-    // First get proposal
-    const proposal = await this.getProposal(params);
-
-    if (!proposal.proposal?.id) {
-      throw new Error('No proposal ID received');
-    }
-
-    // Then buy the contract
-    const buy = await this.send({
+    // Step 2: Buy
+    const buyResponse = await this.send({
       buy: proposal.proposal.id,
       price: params.amount,
     });
-
-    if (buy.error) {
-      throw new Error(buy.error.message);
-    }
-
-    if (!buy.buy?.contract_id) {
-      throw new Error('No contract ID received');
-    }
+    if (buyResponse.error) throw new Error(buyResponse.error.message);
 
     return {
-      contractId: String(buy.buy.contract_id),
-      buyPrice: buy.buy.buy_price,
+      contractId: String(buyResponse.buy.contract_id),
+      buyPrice: buyResponse.buy.buy_price,
     };
   }
 
-  // =============================
-  // SELL CONTRACT
-  // =============================
-  async sellContract(contractId: string, price: number): Promise<any> {
-    const response = await this.send({
-      sell: contractId,
-      price: price,
-    });
-
-    if (response.error) {
-      throw new Error(response.error.message);
-    }
-
-    return response;
-  }
-
-  // =============================
-  // GET OPEN CONTRACTS
-  // =============================
-  async getOpenContracts(): Promise<any[]> {
-    const response = await this.send({
-      proposal_open_contract: 1,
-    });
-
-    if (response.error) {
-      throw new Error(response.error.message);
-    }
-
-    return response.proposal_open_contract || [];
-  }
-
-  // =============================
-  // WAIT FOR CONTRACT RESULT
-  // =============================
-  waitForContractResult(contractId: string, duration: number): Promise<ContractResult> {
+  /**
+   * CRITICAL: Wait for a contract to fully settle (expire).
+   * Subscribes to proposal_open_contract and resolves only when
+   * is_expired === 1 or is_sold === 1.
+   * Returns the REAL profit from Deriv API — no local guessing.
+   */
+  waitForContractResult(contractId: string): Promise<ContractResult> {
     return new Promise((resolve, reject) => {
-      let subId: string | null = null;
-      let isResolved = false;
-
+      let subscriptionId: string | null = null;
       const timeout = setTimeout(() => {
-        if (!isResolved) {
-          isResolved = true;
-          if (subId) {
-            this.send({ forget: subId }).catch(() => {});
-          }
-          removeHandler();
-          reject(new Error(`Timeout waiting for contract ${contractId}`));
-        }
-      }, duration * 1000 + 10000);
+        reject(new Error('Contract result timeout (60s)'));
+      }, 60000);
 
-      const handler = (data: any) => {
-        if (isResolved) return;
-        
+      const checkResult = (data: any) => {
         const poc = data.proposal_open_contract;
         if (!poc) return;
-        
-        if (String(poc.contract_id) !== contractId) return;
+        if (String(poc.contract_id) !== String(contractId)) return;
 
-        const isSold = poc.is_sold === 1;
-        const isExpired = poc.is_expired === 1;
-        const settled = isExpired || isSold;
+        const isSettled = poc.is_expired === 1 || poc.is_sold === 1 || poc.status === 'sold';
 
-        if (settled) {
-          isResolved = true;
+        if (isSettled) {
           clearTimeout(timeout);
 
-          // Unsubscribe
-          if (subId) {
-            this.send({ forget: subId }).catch(() => {});
+          // Forget this subscription
+          if (subscriptionId) {
+            this.send({ forget: subscriptionId }).catch(() => {});
           }
 
-          // Remove handler
-          removeHandler();
+          // Remove global handler
+          this.globalHandlers = this.globalHandlers.filter(h => h !== checkResult);
 
-          // Calculate profit
-          let profit = 0;
-          if (typeof poc.profit === 'number') {
-            profit = poc.profit;
-          } else if (typeof poc.sell_price === 'number' && typeof poc.buy_price === 'number') {
-            profit = poc.sell_price - poc.buy_price;
-          }
+          const profit = poc.profit || (poc.sell_price - poc.buy_price) || 0;
+          const won = profit > 0;
 
           resolve({
-            contractId,
+            contractId: String(poc.contract_id),
             profit,
-            status: profit > 0 ? 'won' : profit < 0 ? 'lost' : 'open',
-            isExpired,
+            status: won ? 'won' : 'lost',
+            isExpired: poc.is_expired === 1,
             buyPrice: poc.buy_price || 0,
             sellPrice: poc.sell_price || 0,
           });
         }
       };
 
-      const removeHandler = () => {
-        const index = this.globalHandlers.indexOf(handler);
-        if (index !== -1) {
-          this.globalHandlers.splice(index, 1);
-        }
-      };
+      // Register global handler to catch subscription messages
+      this.globalHandlers.push(checkResult);
 
-      this.globalHandlers.push(handler);
-
-      // Subscribe to contract updates
+      // Subscribe to the contract
       this.send({
         proposal_open_contract: 1,
         contract_id: contractId,
         subscribe: 1,
-      })
-        .then(res => {
-          if (res.subscription?.id) {
-            subId = res.subscription.id;
-          }
-          if (res.error) {
-            throw new Error(res.error.message);
-          }
-          // Check initial state
-          handler(res);
-        })
-        .catch(error => {
-          if (!isResolved) {
-            isResolved = true;
-            clearTimeout(timeout);
-            removeHandler();
-            reject(error);
-          }
-        });
+      }).then(data => {
+        if (data.error) {
+          clearTimeout(timeout);
+          this.globalHandlers = this.globalHandlers.filter(h => h !== checkResult);
+          reject(new Error(data.error.message));
+          return;
+        }
+        if (data.subscription) {
+          subscriptionId = data.subscription.id;
+        }
+        // Check if already settled in the initial response
+        checkResult(data);
+      }).catch(err => {
+        clearTimeout(timeout);
+        this.globalHandlers = this.globalHandlers.filter(h => h !== checkResult);
+        reject(err);
+      });
     });
   }
 
-  // =============================
-  // UTIL
-  // =============================
-  extractLastDigit(price: number): number {
-    const str = price.toString();
-    // Handle scientific notation
-    const numStr = str.includes('e') ? price.toFixed(10) : str;
-    const lastChar = numStr.slice(-1);
-    const digit = parseInt(lastChar);
-    return isNaN(digit) ? 0 : digit;
+  /** Legacy buy — kept for backward compat but prefer buyContract + waitForContractResult */
+  async buy(params: {
+    contract_type: string;
+    symbol: string;
+    duration: number;
+    duration_unit: string;
+    basis: string;
+    amount: number;
+    barrier?: string;
+  }): Promise<any> {
+    const { contractId, buyPrice } = await this.buyContract(params);
+    const result = await this.waitForContractResult(contractId);
+    return {
+      buy: {
+        contract_id: contractId,
+        buy_price: buyPrice,
+        profit: result.profit,
+      },
+      contractResult: result,
+    };
   }
 
-  onMessage(handler: MessageHandler): () => void {
+  onMessage(handler: MessageHandler) {
     this.globalHandlers.push(handler);
     return () => {
-      const index = this.globalHandlers.indexOf(handler);
-      if (index !== -1) {
-        this.globalHandlers.splice(index, 1);
-      }
+      this.globalHandlers = this.globalHandlers.filter(h => h !== handler);
     };
   }
 }
 
-// =============================
-// INSTANCE
-// =============================
 export const derivApi = new DerivAPI();
 
-// =============================
-// OAUTH PARSER (SECURE)
-// =============================
+export function getOAuthUrl(): string {
+  return DERIV_OAUTH_URL;
+}
+
 export function parseOAuthRedirect(search: string): DerivAccount[] {
   const params = new URLSearchParams(search);
-
-  const state = params.get('state');
-  const saved = localStorage.getItem('oauth_state');
-
-  if (state !== saved) {
-    localStorage.removeItem('oauth_state');
-    throw new Error('Invalid OAuth state - possible CSRF attack');
-  }
-
-  // Clear used state
-  localStorage.removeItem('oauth_state');
-
   const accounts: DerivAccount[] = [];
+  
   let i = 1;
-
   while (params.has(`acct${i}`)) {
-    const loginid = params.get(`acct${i}`);
-    const token = params.get(`token${i}`);
-    const currency = params.get(`cur${i}`) || 'USD';
-    
-    if (loginid && token) {
-      accounts.push({
-        loginid,
-        token,
-        currency,
-        is_virtual: loginid.startsWith('VRTC'),
-      });
-    }
+    accounts.push({
+      loginid: params.get(`acct${i}`)!,
+      token: params.get(`token${i}`)!,
+      currency: params.get(`cur${i}`) || 'USD',
+      is_virtual: params.get(`acct${i}`)!.startsWith('VRTC'),
+    });
     i++;
   }
-
+  
   return accounts;
 }
 
-// =============================
-// HELPER FUNCTIONS
-// =============================
-export function isConnectionError(error: any): boolean {
-  return error?.message?.includes('WebSocket') || 
-         error?.message?.includes('timeout') ||
-         error?.code === 'ECONNREFUSED';
-}
+export const MARKETS = [
+  { symbol: '1HZ10V', name: 'Volatility 10 (1s)', group: 'vol' },
+  { symbol: 'R_10', name: 'Volatility 10', group: 'vol' },
+  { symbol: '1HZ15V', name: 'Volatility 15 (1s)', group: 'vol' },
+  { symbol: '1HZ25V', name: 'Volatility 25 (1s)', group: 'vol' },
+  { symbol: 'R_25', name: 'Volatility 25', group: 'vol' },
+  { symbol: '1HZ30V', name: 'Volatility 30 (1s)', group: 'vol' },
+  { symbol: '1HZ50V', name: 'Volatility 50 (1s)', group: 'vol' },
+  { symbol: 'R_50', name: 'Volatility 50', group: 'vol' },
+  { symbol: '1HZ75V', name: 'Volatility 75 (1s)', group: 'vol' },
+  { symbol: 'R_75', name: 'Volatility 75', group: 'vol' },
+  { symbol: '1HZ90V', name: 'Volatility 90 (1s)', group: 'vol' },
+  { symbol: '1HZ100V', name: 'Volatility 100 (1s)', group: 'vol' },
+  { symbol: 'R_100', name: 'Volatility 100', group: 'vol' },
+  { symbol: 'JD10', name: 'Jump 10', group: 'jump' },
+  { symbol: 'JD25', name: 'Jump 25', group: 'jump' },
+  { symbol: 'JD50', name: 'Jump 50', group: 'jump' },
+  { symbol: 'JD75', name: 'Jump 75', group: 'jump' },
+  { symbol: 'JD100', name: 'Jump 100', group: 'jump' },
+  { symbol: 'RDBULL', name: 'Bull Market', group: 'bull' },
+  { symbol: 'RDBEAR', name: 'Bear Market', group: 'bear' },
+] as const;
 
-export function formatDerivError(error: any): string {
-  if (error?.error?.message) return error.error.message;
-  if (error?.message) return error.message;
-  return 'Unknown Deriv API error';
-}
+export type MarketSymbol = typeof MARKETS[number]['symbol'];
+
+export const MARKET_GROUPS = [
+  { value: 'vol', label: 'Volatilities' },
+  { value: 'jump', label: 'Jump' },
+  { value: 'bull', label: 'Bull' },
+  { value: 'bear', label: 'Bear' },
+] as const;
